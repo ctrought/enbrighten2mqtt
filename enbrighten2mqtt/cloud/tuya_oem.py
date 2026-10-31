@@ -4,7 +4,7 @@ Logs into the user's own Enbrighten account (email + password) and reads back
 their devices' localKeys. Request signing is in signing.py and bmp_token.py.
 No Tuya developer project is needed — just the user's credentials.
 
-Flow: email token.create -> RSA-encrypt password -> email.password.login ->
+Flow: username.token.get -> RSA-encrypt password -> email.password.login ->
 location list -> per-home device list (each device carries its localKey).
 """
 
@@ -116,8 +116,14 @@ class TuyaOemApi:
     # -- auth ---------------------------------------------------------------
 
     def login(self, email: str, password: str) -> None:
-        tok = self._call("thing.m.user.email.token.create", data={
-            "countryCode": self.country_code, "email": email,
+        # The token + RSA key for email login come from username.token.get
+        # (v2.0, account in the "username" field, isUid=false), NOT from
+        # email.token.create. email.token.create returns a usable-looking key
+        # too, but the keypair it mints is not the one the password-login
+        # handler validates against, so the server rejects the (correctly
+        # encrypted) password as USER_PASSWD_WRONG.
+        tok = self._call("thing.m.user.username.token.get", version="2.0", data={
+            "countryCode": self.country_code, "username": email, "isUid": False,
         }, requires_sid=False)
         token = tok["token"]
         pub, exp = tok["publicKey"], tok["exponent"]
