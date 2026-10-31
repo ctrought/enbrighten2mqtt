@@ -59,7 +59,7 @@ class TuyaOemApi:
     def __init__(self, creds: dict, *, session: requests.Session | None = None):
         self.host = creds.get("api_region_host", "a1-us.iotbing.com")
         self.client_id = creds["client_id"]
-        self.hmac_key = creds["hmac_key"]            # precomputed cert_bmp_secret
+        self.hmac_key = creds["hmac_key"]            # package_cert_bmp_secret (see signing.py)
         self.country_code = creds.get("country_code", "1")
         self.ttid = creds.get("ttid", "enbrightensmart")
         self.ch_key = creds.get("ch_key", "")   # channel key seen in app traffic

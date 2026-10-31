@@ -1,8 +1,8 @@
 """Derive the Tuya 'BMP token' from assets/t_s.bmp for a given appKey.
 
 Pure-Python reimplementation of tuya-sign-hacking's read-keys-from-bmp. The
-token is the middle component of the API-signing HMAC key:
-    hmac_key = <cert_sha256> _ <bmp_token> _ <appSecret>
+token is one component of the API-signing HMAC key (see signing.py):
+    hmac_key = <package> _ <cert_sha256> _ <bmp_token> _ <appSecret>
 
 The pixel bytes at offsets derived from the appKey's hash encode coefficient
 pairs (a_i, b_i); each key is the integer solving the linear system over the

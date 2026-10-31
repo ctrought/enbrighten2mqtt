@@ -8,10 +8,16 @@ Algorithm:
   4. Join as `key=value` with `||` between pairs  ->  the string-to-sign.
   5. sign = HMAC-SHA256(string-to-sign, HMAC_KEY), lowercase hex.
 
-HMAC_KEY = "<cert_sha256>_<bmp_token>_<appSecret>", where cert_sha256 is the
-APK signing cert's SHA-256 as UPPERCASE colon-separated hex (32 bytes), bmp_token
-is decoded from assets/t_s.bmp for this appKey (see bmp_token.py), and appSecret
-is the app's Tuya secret (from BuildConfig).
+HMAC_KEY = "<package>_<cert_sha256>_<bmp_token>_<appSecret>", where:
+  - package     is the app's Android package name (BuildConfig APPLICATION_ID),
+                e.g. "com.enbrighten.smart",
+  - cert_sha256 is the APK signing cert's SHA-256 as UPPERCASE colon-separated
+                hex (32 bytes, 95 chars),
+  - bmp_token   is decoded from assets/t_s.bmp for this appKey (see bmp_token.py),
+  - appSecret   is the app's Thing/Tuya secret (from BuildConfig).
+
+The session id (sid) is only ever a signed *parameter*, never part of the key,
+so login and all post-login requests use this same static key.
 
 Everything here is deterministic from constants shipped in the APK, so an
 end user only needs to provide their Enbrighten email + password.
@@ -38,8 +44,15 @@ def cert_sha256_colon(hex64: str) -> str:
     return ":".join(h[i:i + 2] for i in range(0, len(h), 2))
 
 
-def build_hmac_key(cert_sha256_hex: str, bmp_token: str, app_secret: str) -> str:
-    return f"{cert_sha256_colon(cert_sha256_hex)}_{bmp_token}_{app_secret}"
+def build_hmac_key(cert_sha256_hex: str, bmp_token: str, app_secret: str,
+                   package: str) -> str:
+    """Compose the native signer's HMAC key (Thing SDK 6.11.0).
+
+    Order is package || cert(uppercase colon) || bmp_token || appSecret, joined
+    by '_'. The package-name prefix is what distinguishes 6.11.0 from the older
+    documented `<cert>_<bmp>_<secret>` scheme.
+    """
+    return f"{package}_{cert_sha256_colon(cert_sha256_hex)}_{bmp_token}_{app_secret}"
 
 
 def _swap_sign_string(s: str) -> str:
