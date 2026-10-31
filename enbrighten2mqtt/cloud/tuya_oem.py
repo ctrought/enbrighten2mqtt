@@ -153,20 +153,49 @@ class TuyaOemApi:
             return res
         return res.get("list", res.get("spaceList", res.get("datas", [])))
 
+    # Candidate home-device-list endpoints, in priority order. Different
+    # Tuya/Thing home setups populate different lists, so we take the first
+    # that returns devices. Each is (action, version, postData-template); {gid}
+    # is substituted per home.
+    _DEVICE_LIST_APIS = [
+        ("m.life.my.group.device.list", "2.2", {"gid": "{gid}"}),
+        ("m.life.app.smart.local.device.list", "1.1",
+         {"homeId": "{gid}", "groupType": "homeGroup"}),
+        ("thing.m.location.dashboard.list", "3.1",
+         {"gid": "{gid}", "limit": 100, "options": "{}", "lat": "0", "lon": "0"}),
+    ]
+
+    @staticmethod
+    def _extract_devices(resp) -> list[dict]:
+        if isinstance(resp, list):
+            return [x for x in resp if isinstance(x, dict)]
+        if isinstance(resp, dict):
+            for k in ("deviceList", "devices", "list", "datas", "data"):
+                v = resp.get(k)
+                if isinstance(v, list) and v and isinstance(v[0], dict):
+                    return v
+        return []
+
+    def _home_devices(self, gid) -> list[dict]:
+        for action, ver, tmpl in self._DEVICE_LIST_APIS:
+            data = {k: (gid if v == "{gid}" else
+                        str(gid) if v == "{gid!s}" else v)
+                    for k, v in tmpl.items()}
+            try:
+                items = self._extract_devices(
+                    self._call(action, version=ver, data=data))
+            except TuyaOemError:
+                continue
+            if items:
+                return items
+        return []
+
     def devices(self) -> list[Device]:
         out: list[Device] = []
         seen: set[str] = set()
         for home in self.homes():
             gid = home.get("gid") or home.get("groupId") or home.get("id")
-            # Local device list -- the bean that carries each device's localKey
-            # v1.1, {homeId, groupType:"homeGroup"} -> {deviceList:[DeviceRespBeanEx]}).
-            raw = self._call("m.life.app.smart.local.device.list", version="1.1",
-                             data={"homeId": gid, "groupType": "homeGroup"})
-            if isinstance(raw, list):
-                items = raw
-            else:
-                items = raw.get("deviceList", raw.get("list", []))
-            for d in items:
+            for d in self._home_devices(gid):
                 did = d.get("devId") or d.get("id")
                 if not did or did in seen:
                     continue
