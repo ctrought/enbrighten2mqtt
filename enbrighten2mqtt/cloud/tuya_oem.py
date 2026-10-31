@@ -44,12 +44,18 @@ class TuyaOemError(RuntimeError):
     pass
 
 
-def _rsa_encrypt(plain: str, public_key_hex: str, exponent_hex: str) -> str:
-    """RSA/ECB/PKCS1v1.5 encrypt, returns lowercase hex (Tuya login scheme)."""
+def _rsa_encrypt(plain: str, public_key: str, exponent: str) -> str:
+    """RSA/NONE/PKCS1Padding (== PKCS1 v1.5) encrypt, lowercase-hex output.
+
+    token.create returns the modulus and exponent as base-10 DECIMAL strings;
+    the app parses them with new BigInteger(str) (radix 10), so decode base 10,
+    not hex. (A 1024-bit modulus is ~309 decimal digits -- parsing it as hex
+    yields a wrong key and the server rejects the password as USER_PASSWD_WRONG.)
+    """
     from cryptography.hazmat.primitives.asymmetric import rsa, padding
     from cryptography.hazmat.backends import default_backend
-    n = int(public_key_hex, 16)
-    e = int(exponent_hex, 16)
+    n = int(public_key, 10)
+    e = int(exponent, 10)
     pub = rsa.RSAPublicNumbers(e, n).public_key(default_backend())
     ct = pub.encrypt(plain.encode(), padding.PKCS1v15())
     return ct.hex()
