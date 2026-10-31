@@ -1,16 +1,32 @@
 mqtt:
-  host: 127.0.0.1        # your Mosquitto / HA broker
-  port: 1883
-  username: null
-  password: null
+  host: 127.0.0.1        # your Mosquitto / HA broker (env: MQTT_HOST)
+  port: 1883             # env: MQTT_PORT
+  username: null         # env: MQTT_USER
+  password: null         # env: MQTT_PASS
   base_topic: enbrighten2mqtt
   discovery_prefix: homeassistant
-log_level: INFO
-# Devices are usually loaded from devices.json (written by `login`).
-# You can also list them here explicitly:
+
+# Enbrighten account. On startup the bridge logs in and fetches each device's
+# localKey automatically (no manual steps). It then runs entirely on the LAN;
+# the cloud is only touched to (re)build the key cache.
+#
+# SECURITY: prefer environment variables (ENBRIGHTEN_EMAIL / ENBRIGHTEN_PASSWORD)
+# or the Home Assistant add-on options over putting your password in this file,
+# especially if the file is committed to git.
+enbrighten:
+  email: null                   # env: ENBRIGHTEN_EMAIL
+  password: null                # env: ENBRIGHTEN_PASSWORD
+  oem_creds: secrets/oem.json   # Enbrighten app constants (env: OEM_CREDS)
+  devices_file: devices.json    # cache of fetched device keys (env: DEVICES_FILE)
+  refresh: if_missing           # if_missing | always | never  (env: DEVICES_REFRESH)
+
+log_level: INFO                 # env: LOG_LEVEL
+
+# Instead of (or in addition to) the account login above, you can pin devices
+# explicitly and skip the cloud entirely:
 # devices:
 #   - dev_id: ebxxxxxxxxxxxxxxxxxxxx
-#     ip: 192.0.2.10
+#     ip: 192.0.2.10          # optional; discovered on the LAN if omitted
 #     local_key: "xxxxxxxxxxxxxxxx"
 #     name: Eternity Landscape Lights
 #     product_id: wagmuetuwhn4lgr7

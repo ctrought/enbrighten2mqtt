@@ -76,6 +76,43 @@ python -m enbrighten2mqtt serve                           # run the MQTT bridge
 ```
 
 
+## Deployment
+No custom Home Assistant integration is needed — the bridge publishes via MQTT
+discovery, so HA's built-in MQTT integration creates the light entities itself.
+The bridge **auto-logs-in on startup** (from config/env credentials) when it has
+no cached keys, so a container just needs your email, password and an MQTT host.
+
+**Everything is configurable by env var or file** (env wins):
+
+| Env | Purpose |
+|-----|---------|
+| `ENBRIGHTEN_EMAIL` / `ENBRIGHTEN_PASSWORD` | account login (fetches localKeys) |
+| `OEM_CREDS` | path to the Enbrighten app constants (`oem.json`) |
+| `DEVICES_FILE` | where the fetched key cache is written/read |
+| `DEVICES_REFRESH` | `if_missing` (default) / `always` / `never` |
+| `MQTT_HOST` / `MQTT_PORT` / `MQTT_USER` / `MQTT_PASS` | broker |
+
+`oem.json` holds the Enbrighten app's own API constants (extracted once from the
+APK; the same for every user). It is **not** in this repo — provide it via
+`OEM_CREDS` / the add-on config folder, or bake it into your image.
+
+### Standalone container (HA Container/Core, or any Docker host)
+```
+docker run --network host \
+  -e ENBRIGHTEN_EMAIL=you@example.com -e ENBRIGHTEN_PASSWORD=... \
+  -e MQTT_HOST=your-broker-host \
+  -v /srv/enbrighten2mqtt:/data \   # holds secrets/oem.json + devices.json cache
+  ghcr.io/youruser/enbrighten2mqtt
+```
+`--network host` is required: LAN discovery is a UDP broadcast.
+
+### Home Assistant add-on (HA OS / Supervised)
+`ha-addon/` is a standard add-on: `host_network: true` for LAN access and
+`services: [mqtt:want]` so it uses HA's Mosquitto broker automatically. You set
+your Enbrighten email/password in the add-on options and drop `oem.json` in the
+add-on config folder; it self-provisions on start. (Publish the image for your
+arches from `ha-addon/Dockerfile` and point the add-on's repo at it.)
+
 ## Files
 - `enbrighten2mqtt/codec/eternity.py` — dp106 encode/decode (the protocol)
 - `enbrighten2mqtt/controller.py` — state-preserving device control

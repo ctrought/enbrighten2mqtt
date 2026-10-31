@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "enbrighten2mqtt"
+version = "0.2.0"
+description = "Local LAN control of Enbrighten Eternity (Tuya) lights via Home Assistant / MQTT"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "tinytuya>=1.13",
+    "paho-mqtt>=1.6",
+    "pyyaml>=6.0",
+    "cryptography>=40",
+    "requests>=2.28",
+]
+
+[project.scripts]
+enbrighten2mqtt = "enbrighten2mqtt.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["enbrighten2mqtt*"]

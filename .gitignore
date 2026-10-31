@@ -21,3 +21,9 @@ __pycache__/
 tuya_ref/
 re_workspace/
 .passwd
+
+# Python build artifacts
+build/
+dist/
+*.egg-info/
+*.swp

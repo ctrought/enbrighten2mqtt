@@ -18,10 +18,11 @@ import logging
 import queue
 import threading
 import time
+from pathlib import Path
 
 import paho.mqtt.client as mqtt
 
-from ..config import Config, DeviceConfig
+from ..config import Config, DeviceConfig, devices_from_json
 from ..codec import eternity as codec
 from ..codec.eternity import Color
 from ..controller import Controller
@@ -258,9 +259,56 @@ class Bridge:
         self.client.disconnect()
 
 
+def _login_and_cache(cfg: Config) -> None:
+    from ..cloud.tuya_oem import TuyaOemApi, save_devices
+    eb = cfg.enbrighten
+    log.info("logging in to Enbrighten to fetch device keys...")
+    creds = json.loads(Path(eb.oem_creds).read_text())
+    api = TuyaOemApi(creds)
+    api.login(eb.email, eb.password)
+    devices = api.devices()
+    save_devices(devices, eb.devices_file)
+    log.info("fetched %d device(s) -> %s", len(devices), eb.devices_file)
+
+
+def bootstrap_devices(cfg: Config) -> list[DeviceConfig]:
+    """Resolve the devices to serve.
+
+    Order: an explicit `devices:` config list (handled by the caller) wins; then
+    a cached devices.json; and when that cache is missing or stale AND account
+    credentials are configured, log into Enbrighten automatically to (re)build
+    it. This lets the container/add-on self-provision from just email+password.
+    """
+    eb = cfg.enbrighten
+    have_cache = Path(eb.devices_file).exists()
+    want_login = eb.refresh == "always" or (not have_cache and eb.refresh != "never")
+    if want_login and eb.email and eb.password:
+        if not Path(eb.oem_creds).exists():
+            log.warning("auto-login skipped: OEM creds file %s not found",
+                        eb.oem_creds)
+        else:
+            try:
+                _login_and_cache(cfg)
+            except SystemExit:
+                raise
+            except Exception as e:  # noqa: BLE001
+                if have_cache:
+                    log.warning("auto-login failed (%s); using cached %s",
+                                e, eb.devices_file)
+                else:
+                    raise SystemExit(f"auto-login failed and no cached devices "
+                                     f"to fall back on: {e}")
+    return devices_from_json(eb.devices_file)
+
+
 def run(config_path: str = "config.yaml") -> None:
     cfg = Config.load(config_path)
     logging.getLogger().setLevel(cfg.log_level)
     if not cfg.devices:
-        raise SystemExit("no devices configured; run `login` or set config.yaml")
+        cfg.devices = bootstrap_devices(cfg)
+    if not cfg.devices:
+        raise SystemExit(
+            "no devices to serve. Set enbrighten.email/password (+ an OEM creds "
+            "file) for automatic login, or provide a devices.json / a `devices:` "
+            "list in the config.")
     Bridge(cfg).start()
