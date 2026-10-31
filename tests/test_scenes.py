@@ -92,11 +92,21 @@ def test_custom_modes_finds_nested_records():
     inner = json.dumps({"value": _record(), "type": "Object"})
     props = {"abc123": json.dumps({"data": inner, "time": 1}),
              "other": json.dumps({"data": json.dumps({"value": {"like": True}})}),
-             # A default preset carries no colour data and must be left alone.
-             "def456": json.dumps({"data": json.dumps(
-                 {"value": {"mode": 3, "effect": 1, "colorData": []}})})}
+             "embed_sys_env": "prod"}
     found = custom_modes(props)
     assert [r["mode"] for r in found] == [18]
+
+
+def test_edited_preset_without_colors_is_imported():
+    # Shape as stored by the app: an edited Halloween, isDefault still true.
+    rec = {"code": "Halloween", "order": 10, "mode": 2, "effect": 1, "speed": 760,
+           "dimming": 1000, "isDefault": True, "type": "Celebration",
+           "colors": ["#FF2102", "#9C23FC"]}
+    props = {"507a8asthm_modeState_2": json.dumps(
+        {"data": json.dumps({"value": rec, "type": "Object"}), "time": 1})}
+    store = SceneStore()
+    assert store.import_scenes(custom_modes(props)) == ["halloween"]
+    assert store.scene_payload("halloween") == "020102f803e8"
 
 
 def test_custom_modes_reads_lists():

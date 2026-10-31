@@ -223,8 +223,9 @@ def custom_modes(properties) -> list[dict]:
             for item in node:
                 walk(item)
         elif isinstance(node, dict):
-            if isinstance(node.get("mode"), int) and "effect" in node \
-                    and node.get("colorData"):
+            # The panel only stores records it has changed, so an edited preset
+            # counts even with no colors of its own (and isDefault still true).
+            if isinstance(node.get("mode"), int) and "effect" in node:
                 found[node["mode"]] = node
             else:
                 for item in node.values():
