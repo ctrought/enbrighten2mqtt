@@ -153,6 +153,18 @@ class TuyaOemApi:
             return res
         return res.get("list", res.get("spaceList", res.get("datas", [])))
 
+    def device_properties(self, dev_id: str):
+        """The panel's cloud storage for a device, where DIY scenes are kept."""
+        last: TuyaOemError | None = None
+        # The panel names the API with a host-app prefix it resolves natively.
+        for prefix in ("thing", "tuya", "smartlife"):
+            try:
+                return self._call(f"{prefix}.m.dev.property.get", version="2.0",
+                                  data={"devId": dev_id, "bizType": 0})
+            except TuyaOemError as e:
+                last = e
+        raise last
+
     def schema(self) -> dict[str, dict]:
         """Best-effort per-product DP standard config, keyed by productId.
 

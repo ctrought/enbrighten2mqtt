@@ -28,3 +28,6 @@ build/
 dist/
 *.egg-info/
 *.swp
+
+# learned scenes and saved looks (per-user data)
+scenes.json

@@ -6,7 +6,7 @@ bulbs: 12
 dps:
   switch: 20          # bool power
   countdown: 26       # int seconds
-  unknown101: 101     # bool (music/mic?)
+  reverse: 101        # bool reverse effect direction
   mask: 104           # 12-char per-bulb on/off
   state: 106          # packed color/scene/effect/speed/brightness
 state_format: "[mode][effect][speed:2][brightness:2](ncolors-1)#[WRGB...]"

@@ -3,7 +3,7 @@
 # it to match each release (and set `image` to your published repo). The image
 # reads these options from /data/options.json on start (see hassio.py).
 name: Enbrighten2MQTT
-version: "0.1.0"
+version: "0.2.0"
 slug: enbrighten2mqtt
 description: Local LAN control of Enbrighten Eternity (Tuya) lights via MQTT
 url: https://github.com/ctrought/enbrighten2mqtt

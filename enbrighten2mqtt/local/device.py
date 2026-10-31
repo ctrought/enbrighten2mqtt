@@ -21,6 +21,13 @@ log = logging.getLogger("enbrighten2mqtt.local")
 
 _VERSIONS = (3.4, 3.5, 3.3, 3.2, 3.1)
 
+_IO_TIMEOUT = 5.0       # status and writes wait for the device's reply
+_POLL_TIMEOUT = 0.2     # receive() must not hold up queued commands
+
+
+class DeviceError(RuntimeError):
+    """The device refused or failed a request; the session should reconnect."""
+
 
 @dataclass
 class DeviceInfo:
@@ -64,13 +71,20 @@ class LocalDevice:
         if not v:
             raise RuntimeError(f"could not reach {self.info.ip} on any protocol")
         self.info.version = v
+        self.close()    # these devices serve one LAN session at a time
         d = tinytuya.Device(self.info.dev_id, self.info.ip, self.info.local_key,
                             version=float(v))
         d.set_socketPersistent(True)
-        d.set_socketTimeout(5)
+        d.set_socketTimeout(_IO_TIMEOUT)
         d.set_socketRetryLimit(1)
         self._dev = d
         self._connected = True
+
+    def close(self) -> None:
+        if self._dev:
+            self._dev.close()
+            self._dev = None
+        self._connected = False
 
     @property
     def connected(self) -> bool:
@@ -80,15 +94,14 @@ class LocalDevice:
 
     def status(self) -> dict:
         self._ensure()
-        return self._unwrap(self._dev.status())
+        return self._checked(self._dev.status())
 
     def set_dp(self, dp: int | str, value) -> dict:
-        self._ensure()
-        return self._unwrap(self._dev.set_value(dp, value, nowait=False))
+        return self.set_dps({dp: value})
 
     def set_dps(self, dps: dict) -> dict:
         self._ensure()
-        return self._unwrap(self._dev.set_multiple_values(dps, nowait=False))
+        return self._checked(self._dev.set_multiple_values(dps, nowait=False))
 
     def turn(self, on: bool, switch_dp: int = 20) -> dict:
         return self.set_dp(switch_dp, bool(on))
@@ -100,7 +113,11 @@ class LocalDevice:
     def receive(self) -> dict | None:
         """Pump one pushed message (call in a loop in the bridge)."""
         self._ensure()
-        data = self._dev.receive()
+        self._dev.set_socketTimeout(_POLL_TIMEOUT)
+        try:
+            data = self._dev.receive()
+        finally:
+            self._dev.set_socketTimeout(_IO_TIMEOUT)
         data = self._unwrap(data)
         if data and "dps" in data and self.on_dps:
             self.on_dps(data["dps"])
@@ -111,6 +128,13 @@ class LocalDevice:
     def _ensure(self) -> None:
         if not self._connected:
             self.connect()
+
+    def _checked(self, data):
+        """Like _unwrap, but raise so the caller doesn't assume success."""
+        data = self._unwrap(data)
+        if isinstance(data, dict) and data.get("Err"):
+            raise DeviceError(f"{data.get('Error', 'device error')} ({data['Err']})")
+        return data
 
     def _unwrap(self, data):
         if isinstance(data, dict) and data.get("Err"):

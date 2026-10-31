@@ -106,6 +106,54 @@ def cmd_discover(args):
         print(f"  {where}  {d.get('name', '')}  {dev_id}")
 
 
+def _scene_store(args):
+    from .mqtt.bridge import scenes_path
+    from .scenes import SceneStore
+    return SceneStore(scenes_path(args.devices))
+
+
+def cmd_scenes_list(args):
+    store = _scene_store(args)
+    for name in store.scene_names():
+        print(f"{name:32} {store.scene_payload(name) or '(saved look)'}")
+    print("\nEffects: " + ", ".join(store.effect_names()))
+
+
+def cmd_scenes_import(args):
+    from .cloud.tuya_oem import TuyaOemApi
+    from .mqtt.bridge import import_custom_scenes, scenes_path
+    api = TuyaOemApi(_load_json(args.creds))
+    api.login(args.email or input("Enbrighten account email: "),
+              getpass.getpass("Enbrighten password: "))
+    names = import_custom_scenes(api, api.devices(), scenes_path(args.devices))
+    print(f"Imported {len(names)} DIY/edited scene(s): {', '.join(names) or '(none)'}")
+
+
+def cmd_scenes_capture(args):
+    """Name scenes as they're selected in the app, for ones not in the table."""
+    from .config import devices_from_json
+    from .local.device import DeviceInfo, LocalDevice
+    from .local.discovery import find_device_ip
+    store = _scene_store(args)
+    dcfg = next(d for d in devices_from_json(args.devices)
+                if not args.device or d.dev_id == args.device)
+    ip, ver = find_device_ip(dcfg.dev_id)
+    if not ip:
+        sys.exit(f"{dcfg.dev_id} not found on the LAN")
+    dev = LocalDevice(DeviceInfo(dcfg.dev_id, ip, dcfg.local_key, dcfg.version or ver))
+    dev.connect()
+    print("Select a scene in the app, then type a name for it here (blank to stop).")
+    while name := input("name> ").strip():
+        raw = str(dev.status().get("dps", {}).get("106", ""))
+        if not raw or raw.startswith("ff"):
+            print("  the light isn't showing a scene; skipped")
+            continue
+        learned = store.scene_for(raw)
+        if learned != name:
+            store.rename(learned, name)
+        print(f"  {name} = {raw}")
+
+
 def cmd_serve(args):
     from .hassio import apply_addon_options
     from .mqtt.bridge import run
@@ -156,6 +204,18 @@ def main(argv=None):
     pd = sub.add_parser("discover")
     pd.add_argument("--devices", default="devices.json")
     pd.set_defaults(func=cmd_discover)
+
+    psc = sub.add_parser("scenes").add_subparsers(dest="scenes_cmd", required=True)
+    for name, func in (("list", cmd_scenes_list), ("import", cmd_scenes_import),
+                       ("capture", cmd_scenes_capture)):
+        q = psc.add_parser(name)
+        q.add_argument("--devices", default="devices.json")
+        q.set_defaults(func=func)
+        if name == "import":
+            q.add_argument("--creds", default="secrets/oem.json")
+            q.add_argument("--email")
+        if name == "capture":
+            q.add_argument("--device")
 
     ps = sub.add_parser("serve")
     ps.add_argument("--config", default="config.yaml")

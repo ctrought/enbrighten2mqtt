@@ -7,8 +7,9 @@ Modeled on [govee2mqtt](https://github.com/wez/govee2mqtt).
 These lights are white-label **Tuya "Thing"** devices. The bridge logs into your
 Enbrighten account once to read each device's `localKey`, then talks the Tuya
 **LAN protocol** to the lights directly and exposes a full Home Assistant light
-over MQTT: on/off, brightness, RGB + dedicated white, 16 animated effects,
-built-in scenes, multi-colour sequences, and per-bulb masking.
+over MQTT: on/off, brightness, speed, RGB + dedicated white, white temperature,
+21 animated effects, all 58 built-in scenes, your DIY scenes, multi-colour
+sequences, per-bulb on/off, auto-off timer and effect direction.
 
 > **Status:** working and validated on real hardware — Enbrighten Eternity
 > Landscape Lights, productId `wagmuetuwhn4lgr7`, protocol 3.5. The whole chain
@@ -100,27 +101,62 @@ for every user** — *not* your login — so the published image **bakes them in
 and you never deal with them. (Building the image yourself? Drop your `oem.json`
 in `secrets/`; the add-on also accepts one in its config folder.)
 
-## The Home Assistant entity
+## Home Assistant entities
 
-A JSON-schema MQTT light per device:
+Each device appears with these entities, via MQTT discovery:
 
-- **on/off**, **brightness**, **rgbw** colour (dedicated white channel)
-- **effect_list**: 16 effects (`solid`, `strobe`, `pulse`, `chase`, `flame`,
-  `shimmer`, `morph`, `drift`, …) plus built-in scenes (`scene:rainbow`,
-  `scene:mardi_gras`, `scene:clover`, …)
+| Entity | What it does |
+|---|---|
+| **Light** | on/off, brightness, RGBW, white temperature (2200–6000K), effect list with every effect and scene |
+| **Speed** (number) | animation speed, 0–100% |
+| **Effect** (select) | `solid`, `twinkle`, `strobe`, `pulse`, `wave_chase`, `chase`, `wave`, `flame`, … |
+| **Scene** (select) | built-in, learned and DIY scenes, plus saved looks |
+| **Colors** (text) | the 1–6 colour sequence: `#RRGGBB` or `#RRGGBBWW`, comma-separated |
+| **Bulb 1–12** (switch) | turn individual bulbs on or off |
+| **Auto-off timer** (number) | minutes until the light turns off; 0 cancels |
+| **Reverse effect direction** (switch) | run effects the other way |
+| **Preset name** (text) + **Save preset** (button) | save what's showing now as a look |
+| **Connectivity** (binary sensor) | whether the bridge can reach the light |
 
-Advanced control via `enbrighten2mqtt/<devId>/set/advanced` (JSON), for
-automations:
+Effect and Scene report as unknown while the other one is active. As in the app,
+speed has no visible effect on `solid`, `blocking`, `drift` and `shimmer`, and
+brightness has none on `lightning`.
+
+### Scenes and DIY
+
+The device has no way to list scenes, so they come from four places:
+
+- **Built-in:** all 58 presets from the app's Celebration, Every Day and Game Day
+  tabs ship with the bridge.
+- **DIY and edited presets:** these live in the app's cloud storage. They're
+  imported whenever the bridge logs in (`DEVICES_REFRESH=always`, or when the key
+  cache is missing), or on demand with `enbrighten2mqtt scenes import`. After that
+  they're recalled locally. A DIY scene made later needs another import.
+- **Learned:** any scene id the device reports that the bridge doesn't know, such
+  as from a newer app or the physical button, is saved as `scene_2a` and appears
+  in Home Assistant straight away. Selecting a DIY scene in the app therefore
+  works even without an import, but it needs a rename to get a friendly name.
+- **Saved looks:** type a name in Preset name and press Save preset. This stores
+  the current colours, effect, speed, brightness and bulb mask. Looks live on the
+  bridge and don't appear in the app.
+
+Learned scenes and looks are kept in `scenes.json` beside `devices.json`.
+
+### Automation topic
+
+`enbrighten2mqtt/<devId>/set/advanced` takes JSON:
 
 ```json
 {"colors":[{"r":255},{"g":255},{"b":255}], "speed":300}
 {"mask":"110011001100"}          // per-bulb on/off (12 bulbs)
 {"scene":"rainbow"}
 {"countdown":600}                // seconds
+{"rename_scene":{"from":"scene_2a","to":"Porch party"}}
+{"delete_scene":"Porch party"}   // learned scene, imported scene or look
 ```
 
-Live attributes (speed, mode, per-bulb mask, full colour list) are published to
-`enbrighten2mqtt/<devId>/attributes`.
+Live attributes (speed, mode, per-bulb mask, full colour list, raw `dp106`) are
+published to `enbrighten2mqtt/<devId>/attributes`, and show on the light entity.
 
 ## CLI
 
@@ -132,6 +168,9 @@ enbrighten2mqtt list        # show cached devices
 enbrighten2mqtt discover    # find devices on the LAN and show their IPs
 enbrighten2mqtt probe --ip <ip> --device-id <id> --local-key <key>
 enbrighten2mqtt serve       # run the MQTT bridge (what the container does)
+enbrighten2mqtt scenes list     # every scene and effect the bridge knows
+enbrighten2mqtt scenes import   # fetch DIY and edited scenes from the app's cloud
+enbrighten2mqtt scenes capture  # name scenes as you select them in the app
 ```
 
 `serve` does `login` for you on startup; the standalone `login`/`discover`
@@ -154,6 +193,18 @@ LAN protocol 3.5. This is the only model verified end to end.
   common switch datapoint, but treat anything beyond the tested model as
   unverified.
 
+Device control limits:
+
+- **No per-bulb colour.** The protocol has per-bulb on/off and a 1–6 colour
+  sequence, and the app offers nothing finer.
+- **Bulb count is fixed at 12** in Home Assistant. The app supports cut or extended
+  strands; other lengths would need the switch count made configurable.
+- **Schedules aren't exposed.** They're Tuya cloud timers rather than device
+  datapoints; use Home Assistant automations instead.
+- **DIY scenes can't be created from Home Assistant in the app.** Saved looks are
+  the equivalent, and stay on the bridge.
+- White temperature between the app's six presets is interpolated.
+
 Other known limitations:
 
 - The bridge must be on the **same LAN/broadcast domain** as the lights (UDP
@@ -169,14 +220,16 @@ Other known limitations:
 
 ## Building & releasing
 
-A `Makefile` runs the whole pipeline locally (no CI service needed). It takes no
-hardcoded account — `OWNER` is parsed from your git remote and everything is
-overridable (`make push OWNER=you`).
+A `Makefile` runs the whole pipeline locally (no CI service needed). It uses
+**podman** by default, or **docker** (`make … ENGINE=docker`) — multi-arch push
+goes through `podman manifest` or `docker buildx` accordingly. It hardcodes no
+account: `OWNER` is parsed from your git remote and everything is overridable
+(`make push OWNER=you`).
 
 ```bash
 make ci                 # test + lint + build the image locally
-make login              # docker login to ghcr.io (uses $GHCR_TOKEN or `gh auth token`)
-make release            # test, then buildx multi-arch push of :<version> and :latest
+make login              # registry login (uses $GHCR_TOKEN or `gh auth token`)
+make release            # test, then multi-arch push of :<version> and :latest
 make tag                # create the git tag vX.Y.Z
 ```
 
@@ -191,6 +244,7 @@ Versioning is semver: the git tag is `vX.Y.Z`, the image tags are `X.Y.Z` and
 - `enbrighten2mqtt/local/` — tinytuya LAN wrapper + broadcast discovery
 - `enbrighten2mqtt/codec/eternity.py` — `dp106` encode/decode (the protocol)
 - `enbrighten2mqtt/controller.py` — state-preserving device control
+- `enbrighten2mqtt/scenes.py` — learned scenes, DIY import, saved looks
 - `enbrighten2mqtt/mqtt/bridge.py` — MQTT + HA discovery + auto-login bootstrap
 - `profiles/wagmuetuwhn4lgr7.yaml` — per-product datapoint map
 - `ha-addon/` — Home Assistant add-on manifest
