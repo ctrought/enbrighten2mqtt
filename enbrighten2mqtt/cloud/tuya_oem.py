@@ -153,6 +153,30 @@ class TuyaOemApi:
             return res
         return res.get("list", res.get("spaceList", res.get("datas", [])))
 
+    def schema(self) -> dict[str, dict]:
+        """Best-effort per-product DP standard config, keyed by productId.
+
+        Fetched from m.life.product.standard.config.list (v1.1, {gid}) for each
+        home. This describes each product's datapoints (code/type/range) for
+        generic device support; the Enbrighten Eternity lights are already fully
+        handled by codec/eternity.py and do not need it. Returns {} on failure.
+        """
+        out: dict[str, dict] = {}
+        for home in self.homes():
+            gid = home.get("gid") or home.get("groupId") or home.get("id")
+            try:
+                res = self._call("m.life.product.standard.config.list",
+                                 version="1.1", data={"gid": gid})
+            except TuyaOemError:
+                continue
+            items = res if isinstance(res, list) else \
+                res.get("list", res.get("datas", []))
+            for it in items:
+                pid = it.get("productId") or it.get("id")
+                if pid:
+                    out[pid] = it
+        return out
+
     # Candidate home-device-list endpoints, in priority order. Different
     # Tuya/Thing home setups populate different lists, so we take the first
     # that returns devices. Each is (action, version, postData-template); {gid}
@@ -203,9 +227,13 @@ class TuyaOemApi:
                 out.append(Device(
                     dev_id=did, name=d.get("name", did),
                     local_key=d.get("localKey", ""), product_id=d.get("productId", ""),
-                    category=d.get("category", ""), ip=d.get("ip"),
+                    category=d.get("category", ""),
+                    # The cloud "ip" is the device's public/WAN address, useless
+                    # for LAN control -- leave it unset so the bridge discovers
+                    # the LAN IP by UDP broadcast (see local/discovery.py).
+                    ip=None,
                     version=str(d.get("verSw") or d.get("version") or ""),
-                    online=bool(d.get("isOnline")), raw=d))
+                    online=bool(d.get("isOnline") or d.get("cloudOnline")), raw=d))
         return out
 
 

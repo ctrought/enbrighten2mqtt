@@ -26,6 +26,7 @@ from ..codec import eternity as codec
 from ..codec.eternity import Color
 from ..controller import Controller
 from ..local.device import DeviceInfo
+from ..local.discovery import find_device_ip
 
 log = logging.getLogger("enbrighten2mqtt.bridge")
 
@@ -44,6 +45,9 @@ class DeviceWorker(threading.Thread):
         self._stop = threading.Event()
         info = DeviceInfo(dcfg.dev_id, dcfg.ip, dcfg.local_key, dcfg.version)
         self.ctrl = Controller(info, on_state=self._state_changed)
+        # An IP pinned in config is kept across failures; a discovered one is
+        # dropped on failure so we re-discover (device IPs can change on DHCP).
+        self._ip_from_config = bool(dcfg.ip)
         self.online = False
 
     def submit(self, fn):
@@ -55,10 +59,30 @@ class DeviceWorker(threading.Thread):
     def _state_changed(self, state):
         self.publish_state(self.dcfg, state, self.online)
 
+    def _ensure_ip(self) -> bool:
+        """Make sure we have a LAN IP, discovering one by broadcast if not."""
+        if self.ctrl.info.ip:
+            return True
+        ip, ver = find_device_ip(self.dcfg.dev_id)
+        if not ip:
+            log.warning("device %s not found on LAN (UDP broadcast); is the "
+                        "bridge on the same network?", self.dcfg.dev_id[:8])
+            return False
+        self.ctrl.info.ip = ip
+        if ver and not self.ctrl.info.version:
+            self.ctrl.info.version = ver
+        log.info("discovered %s at %s (proto %s)", self.dcfg.dev_id[:8], ip, ver)
+        return True
+
     def run(self):
         backoff = 1.0
         while not self._stop.is_set():
             try:
+                if not self._ensure_ip():
+                    if self._stop.wait(min(backoff * 5, 60)):
+                        break
+                    backoff = min(backoff * 2, 60)
+                    continue
                 self.ctrl.connect()
                 self.online = True
                 backoff = 1.0
@@ -85,6 +109,8 @@ class DeviceWorker(threading.Thread):
             except Exception as e:  # noqa: BLE001
                 self.online = False
                 self._state_changed(self.ctrl.state)
+                if not self._ip_from_config:
+                    self.ctrl.info.ip = ""  # re-discover on the next attempt
                 log.warning("device %s error: %s; reconnect in %.0fs",
                             self.dcfg.dev_id[:8], e, backoff)
                 if self._stop.wait(backoff):

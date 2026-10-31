@@ -20,3 +20,4 @@ __pycache__/
 .pytest_cache/
 tuya_ref/
 re_workspace/
+.passwd

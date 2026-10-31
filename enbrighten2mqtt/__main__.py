@@ -6,6 +6,7 @@ Commands:
   list                     Show saved devices.
   capture --device <id>    Interactive DP capture harness.
   probe --ip <ip>          Try to reach a device locally and dump its status.
+  discover                 Scan the LAN for devices and show their IPs.
   serve                    Run the MQTT bridge.
 """
 
@@ -43,17 +44,16 @@ def cmd_login(args):
     api.login(email, password)
     devices = api.devices()
     save_devices(devices, args.out)
-    # Per-product DP schema fetch is a future feature; skip cleanly until the
-    # API client grows a schema() method rather than erroring per device.
-    if hasattr(api, "schema"):
+    # Best-effort per-product DP schema (generic device support); non-fatal.
+    try:
+        schemas = api.schema()
+    except Exception as e:  # noqa: BLE001
+        schemas, _ = {}, print(f"  product schema fetch skipped: {e}")
+    if schemas:
         Path("schema").mkdir(exist_ok=True)
-        for d in devices:
-            if d.product_id:
-                try:
-                    Path(f"schema/{d.product_id}.json").write_text(
-                        json.dumps(api.schema(d.product_id), indent=2))
-                except Exception as e:  # noqa: BLE001
-                    print(f"  schema fetch failed for {d.product_id}: {e}")
+        for pid, sch in schemas.items():
+            Path(f"schema/{pid}.json").write_text(json.dumps(sch, indent=2))
+        print(f"Saved {len(schemas)} product schema(s) to schema/")
     print(f"Saved {len(devices)} device(s) to {args.out}")
     for d in devices:
         print(f"  {d.name:24} {d.dev_id}  key={'*' * len(d.local_key)}  "
@@ -90,6 +90,20 @@ def cmd_capture(args):
     if not info.ip:
         sys.exit("no IP known for device; pass --ip")
     CaptureSession(info, args.out).run()
+
+
+def cmd_discover(args):
+    from .local.discovery import scan_lan
+    known = {d["dev_id"]: d for d in _load_json(args.devices)}
+    if not known:
+        sys.exit(f"no devices in {args.devices}; run `login` first")
+    found = scan_lan(known.keys())
+    print(f"Found {len(found)}/{len(known)} device(s) on the LAN:")
+    for dev_id, d in sorted(known.items(), key=lambda kv: kv[1].get("name", "")):
+        info = found.get(dev_id)
+        where = (f"{info['ip']:16} proto={info['version']}" if info
+                 else f"{'(not on LAN)':16} powered off / other network?")
+        print(f"  {where}  {d.get('name', '')}  {dev_id}")
 
 
 def cmd_serve(args):
@@ -136,6 +150,10 @@ def main(argv=None):
     pc.add_argument("--devices", default="devices.json")
     pc.add_argument("--out", default="captures")
     pc.set_defaults(func=cmd_capture)
+
+    pd = sub.add_parser("discover")
+    pd.add_argument("--devices", default="devices.json")
+    pd.set_defaults(func=cmd_discover)
 
     ps = sub.add_parser("serve")
     ps.add_argument("--config", default="config.yaml")
