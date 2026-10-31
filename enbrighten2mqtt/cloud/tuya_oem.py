@@ -115,11 +115,17 @@ class TuyaOemApi:
         }, requires_sid=False)
         token = tok["token"]
         pub, exp = tok["publicKey"], tok["exponent"]
+        # Thing SDK: passwd = RSA/PKCS1( md5hex(password) ). The hash is plain
+        # lowercase MD5 hex -- MD5Util.md5AsBase64 is a misnomer, it returns
+        # HexUtil.bytesToHexString(md5(x)) -- and there is NO token prefix: the
+        # token travels only in its own postData field.
         md5pw = hashlib.md5(password.encode()).hexdigest()
-        enc = _rsa_encrypt(token + "_" + md5pw, pub, exp)
-        result = self._call("thing.m.user.email.password.login", data={
+        enc = _rsa_encrypt(md5pw, pub, exp)
+        result = self._call("thing.m.user.email.password.login", version="3.0",
+                            data={
             "countryCode": self.country_code, "email": email,
-            "passwd": enc, "token": token, "ifencrypt": 1,
+            "passwd": enc, "options": '{"group": 1}',
+            "token": token, "ifencrypt": 1,
         }, requires_sid=False)
         self.sid = result.get("sid")
         if not self.sid:
