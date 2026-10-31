@@ -29,12 +29,22 @@ Home Assistant ── MQTT ──> enbrighten2mqtt ── Tuya LAN 3.5 ──> c
    python -m enbrighten2mqtt login            # Enbrighten email + password
    ```
    This logs into your own Enbrighten (Tuya OEM) account and fetches each
-   device's `localKey`, IP and product id. (The cloud-login signing is still
-   being finalised — see *Key retrieval* below for the method that works today.)
+   device's `localKey` and product id. Just your email + password — no emulator,
+   no Tuya developer project. (If you signed up with Google/Apple, set an
+   account password in the app first, via *Forgot password*.)
 3. **Configure**: copy `config.example.yaml` to `config.yaml`, set your MQTT
    broker. Devices load from `devices.json` automatically.
-4. **Run**: `python -m enbrighten2mqtt serve`. The light appears in Home
-   Assistant via MQTT discovery.
+4. **Check the lights are reachable** (optional): `python -m enbrighten2mqtt
+   discover` scans your LAN and shows each device's local IP.
+5. **Run**: `python -m enbrighten2mqtt serve`. The bridge finds each device on
+   the LAN by broadcast and the light appears in Home Assistant via MQTT
+   discovery.
+
+### Cloud vs. local
+The cloud is only touched by `login`, and only to read the `localKey`s. Once
+`devices.json` exists, everything — discovery and all control — is **local**;
+the bridge keeps working with the internet (or Tuya) down. Re-run `login` only
+when you add a device or re-pair one in the app (re-pairing rotates its key).
 
 ## Home Assistant entity
 A JSON-schema MQTT light per device:
@@ -59,6 +69,7 @@ Live attributes (speed, mode, per-bulb mask, full colour list) are published to
 python -m enbrighten2mqtt extract-keys <enbrighten.apk>   # pull Tuya OEM creds
 python -m enbrighten2mqtt login                           # fetch localKeys -> devices.json
 python -m enbrighten2mqtt list                            # show saved devices
+python -m enbrighten2mqtt discover                        # find devices on the LAN
 python -m enbrighten2mqtt probe --ip <ip> --device-id <id> --local-key <key>
 python -m enbrighten2mqtt capture --device <id>           # interactive DP capture
 python -m enbrighten2mqtt serve                           # run the MQTT bridge
