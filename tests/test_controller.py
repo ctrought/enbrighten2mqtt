@@ -123,8 +123,9 @@ def test_palette_survives_a_scene():
     c.set_rgbw(0, 0, 255)
     c.set_effect("rainbow")
     c._apply_dps({"106": "0301012c03e8"})   # the device echoes it back
-    c.set_effect("flame")
-    assert c.dev.dps[106].startswith("ff09") and c.dev.dps[106].endswith("#000000ff")
+    c.set_speed(500)
+    c.apply(colors=c.state.light.colors)    # leaving the scene restores them
+    assert c.dev.dps[106].startswith("ff") and c.dev.dps[106].endswith("#000000ff")
 
 
 def test_unknown_name_writes_nothing():
@@ -172,3 +173,45 @@ def test_failed_write_propagates():
     c.dev = Broken()
     with pytest.raises(RuntimeError):
         c.set_power(False)
+
+
+def test_effect_on_a_scene_keeps_the_scene():
+    c = make_counting()
+    c.set_effect("christmas")
+    c.set_brightness(500)
+    c.set_effect("flame")
+    assert c.dev.dps[106] == "0509012c01f4"
+    assert c.state.light.mode == "scene" and c.state.light.scene == "christmas"
+    c._apply_dps({"106": "0509012c01f4"})   # the device echoes it back
+    assert c.state.light.scene == "christmas" and c.state.light.scene_b1 == 0x09
+
+
+def test_effect_on_a_scene_keeps_diy_colors():
+    c = make_counting()
+    c._apply_dps({"106": "120501f403e81#00ff0000#000000ff"})
+    c.set_effect("flame")
+    assert c.dev.dps[106] == "120901f403e81#00ff0000#000000ff"
+
+
+def test_color_leaves_a_scene_and_effect_then_applies_to_it():
+    c = make_counting()
+    c.set_effect("christmas")
+    c.set_rgbw(255, 0, 0)
+    c.set_effect("flame")
+    assert c.dev.dps[106].startswith("ff09") and c.dev.dps[106].endswith("#00ff0000")
+
+
+def test_every_day_scene_stays_solid():
+    c = make_counting()
+    c.set_effect("welcome_home_daylight")
+    c.set_effect("flame")
+    assert c.dev.dps[106].startswith("9f00")
+
+
+def test_factory_state_is_color_not_a_scene():
+    c = make_counting()
+    c._apply_dps({"106": "00004303e80#FF000000"})
+    assert c.state.light.mode == "color" and c.state.light.colors == [Color(w=255)]
+    assert not [n for n in c.scenes.scene_names() if n == "scene_00"]
+    c.set_effect("flame")
+    assert c.dev.dps[106] == "ff09004303e80#ff000000"

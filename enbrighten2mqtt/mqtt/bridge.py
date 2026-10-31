@@ -322,12 +322,13 @@ class Bridge:
         first = (ls.colors or [Color(w=255)])[0]
         look = self.scenes.look_matching(state.raw)
         scene = look or (ls.scene if ls.mode == "scene" else None)
+        effect = self.scenes.effect_name(ls.scene_b1) if ls.mode == "scene" else ls.effect
         payload = {
             "state": "ON" if state.power else "OFF",
             "brightness": codec.dev_to_ha_brightness(ls.brightness),
             "color": {"r": first.r, "g": first.g, "b": first.b, "w": first.w},
             "color_mode": "rgbw",
-            "effect": f"scene:{scene}" if scene else ls.effect,
+            "effect": f"scene:{scene}" if scene else effect,
         }
         if state.kelvin:
             payload["color_mode"] = "color_temp"
@@ -342,7 +343,7 @@ class Bridge:
             "colors": [{"r": c.r, "g": c.g, "b": c.b, "w": c.w} for c in ls.colors],
             "colors_text": format_colors(ls.colors),
             # "None" is how an MQTT select reports that no option applies.
-            "effect_select": "None" if scene else ls.effect,
+            "effect_select": effect or "None",
             "scene_select": scene or "None",
             "countdown": state.countdown,
             "timer_min": -(-state.countdown // 60),

@@ -118,9 +118,14 @@ Each device appears with these entities, via MQTT discovery:
 | **Preset name** (text) + **Save preset** (button) | save what's showing now as a look |
 | **Connectivity** (binary sensor) | whether the bridge can reach the light |
 
-Effect and Scene report as unknown while the other one is active. As in the app,
-speed has no visible effect on `solid`, `blocking`, `drift` and `shimmer`, and
-brightness has none on `lightning`.
+Effects work on scenes as they do in the app: choosing an effect while a scene is
+active keeps the scene and its colours and only changes the animation. Reselecting
+the scene restores its default effect and speed, so use Save preset to keep a
+combination. Setting a colour leaves the scene, and Scene then reports as unknown.
+The Every Day scenes only support `solid`, as in the app.
+
+As in the app, speed has no visible effect on `solid`, `blocking`, `drift` and
+`shimmer`, and brightness has none on `lightning`.
 
 ### Scenes and DIY
 

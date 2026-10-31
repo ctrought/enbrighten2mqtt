@@ -8,6 +8,7 @@ dp106 layout (hex string):
     then (ncolors-1) digit, '#', then each color as 8 hex = W,R,G,B.
 
     B0 = 0xff  -> color/effect mode (colors follow)
+    B0 = 0x00  -> the same, as found on a factory-fresh light (never sent by the app)
     B0 = other -> scene id; built-in presets have no color list, DIY scenes do
 
 dp104 = 12-char per-bulb mask ('1' on / '0' off).
@@ -73,6 +74,10 @@ SCENE_PAYLOADS = {
 }
 # scene id (B0) -> name, for decoding device state back to a name.
 SCENE_ID_TO_NAME = {int(p[0:2], 16): n for n, p in SCENE_PAYLOADS.items()}
+
+# The app only offers Solid on the Every Day scenes (Welcome Home etc.), whose
+# colors are positional.
+SOLID_ONLY_SCENES = range(157, 166)
 
 NUM_BULBS = 12
 
@@ -155,13 +160,15 @@ def decode_state(raw: str) -> LightState:
     header = parts[0]            # mode+effect+speed+bright+(count-1)
     b0 = int(header[0:2], 16)
     b1 = int(header[2:4], 16)
-    speed = int(header[4:8], 16)
-    bright = int(header[8:12], 16)
+    if len(header) == 11:   # factory-fresh state: a one-byte speed
+        speed, bright = int(header[4:6], 16), int(header[6:10], 16)
+    else:
+        speed, bright = int(header[4:8], 16), int(header[8:12], 16)
     # Colors are 8 hex each (W,R,G,B), normally '#'-separated, though the device
     # also accepts and reports them run together.
     body = "".join(parts[1:])
     colors = [Color.from_hex(body[i:i+8]) for i in range(0, len(body) - 7, 8)]
-    if b0 == COLOR_MODE:
+    if b0 in (COLOR_MODE, 0x00):
         return LightState(mode="color", effect=EFFECTS_INV.get(b1, f"fx_{b1:02x}"),
                           effect_id=b1, speed=speed, brightness=bright,
                           colors=colors or [Color(w=255)])

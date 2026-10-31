@@ -42,7 +42,8 @@ class SceneStore:
         except (OSError, ValueError) as e:
             log.warning("ignoring unreadable %s: %s", self.path, e)
             return
-        self._scenes = raw.get("scenes", {})
+        # Id 00 is a color state, though older versions learned it as a scene.
+        self._scenes = {n: p for n, p in raw.get("scenes", {}).items() if p[:2] != "00"}
         self._effects = raw.get("effects", {})
         self._looks = raw.get("looks", {})
         self._masks = raw.get("masks", {})
@@ -85,6 +86,15 @@ class SceneStore:
     def effect_id(self, name: str) -> int | None:
         with self._lock:
             return codec.EFFECTS.get(name, self._effects.get(name))
+
+    def effect_name(self, effect_id: int | None) -> str | None:
+        """Name for an effect id, without learning it: scenes use some internal ids."""
+        with self._lock:
+            for table in (codec.EFFECTS, self._effects):
+                for name, known in table.items():
+                    if known == effect_id:
+                        return name
+            return None
 
     def look(self, name: str) -> dict | None:
         with self._lock:

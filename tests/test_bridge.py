@@ -176,12 +176,20 @@ def test_ha_restart_republishes(bridge):
 
 def test_state_in_scene_mode(bridge):
     st = DeviceState()
-    st.light.mode, st.light.scene = "scene", "rainbow"
+    st.light.mode, st.light.scene, st.light.scene_b1 = "scene", "rainbow", 0x09
     bridge._publish_state(DEV, st)
     state = json.loads(bridge.client.published["home/lights/devabc/state"])
     attrs = json.loads(bridge.client.published["home/lights/devabc/attributes"])
     assert state["effect"] == "scene:rainbow"
-    assert attrs["scene_select"] == "rainbow" and attrs["effect_select"] == "None"
+    assert attrs["scene_select"] == "rainbow" and attrs["effect_select"] == "flame"
+
+
+def test_scene_with_internal_effect_reports_none(bridge):
+    st = DeviceState()
+    st.light.mode, st.light.scene, st.light.scene_b1 = "scene", "halloween", 0x0f
+    bridge._publish_state(DEV, st)
+    attrs = json.loads(bridge.client.published["home/lights/devabc/attributes"])
+    assert attrs["effect_select"] == "None" and "fx_0f" not in bridge.scenes.effect_names()
 
 
 def test_state_reports_color_temp(bridge):

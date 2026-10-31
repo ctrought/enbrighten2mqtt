@@ -22,8 +22,12 @@ and effect table, and on an Android device with the app installed it's under
 ```
 [B0 mode][B1 effect][B2 B3 speed][B4 B5 brightness]  (+ optional  N '#' colors)
 ```
-- **B0 mode**: `ff` = color/effect mode. Any other value = a scene id.
-- **B1 effect**: the animation, in both modes (table below).
+- **B0 mode**: `ff` = color/effect mode. `00` = the same, seen only on a factory-fresh
+  light (`00004303e80#FF000000`, warm white); the app never sends it. Any other value
+  = a scene id.
+- **B1 effect**: the animation, in both modes (table below). The app's scene editor
+  changes B1 and keeps B0, so a scene can run any effect. It only offers Solid on
+  scenes 157–165.
 - **B2B3 speed**: 16-bit, 0..1000.
 - **B4B5 brightness** (`dimming`): 16-bit, 1..1000.
 - Optional colors: a single digit = **(number of colors − 1)**, then `#` before
@@ -74,8 +78,7 @@ The app's white presets, as W + RGB (`WHITE_POINTS` in the codec):
 
 ## DIY scenes and edited presets
 There's no DP listing scenes. The panel keeps its scene records in Tuya's cloud
-device storage: `m.dev.property.get` (v2.0, `{devId, bizType: 0}`) with a host-app
-prefix the panel resolves natively, and `m.dev.property.save` to write. Records are
+device storage: `s.m.dev.property.get` (v2.0, `{devId, bizType: 0}`) to read. Records are
 stored as JSON nested inside JSON, one per key derived from `modeState_<mode>`:
 
 ```json
@@ -86,12 +89,9 @@ stored as JSON nested inside JSON, one per key derived from `modeState_<mode>`:
 
 Recalling one is an ordinary local dp106 write (plus dp104 for `lightStr`); only
 reading the list needs the cloud. The record layout and the formatter come from the
-panel code, and the device accepts and holds the resulting dp106. **Importing from
-the live cloud API hasn't been exercised yet**, including which host-app prefix
-works, so `TuyaOemApi.device_properties` tries the likely ones.
+panel code, and the device accepts and holds the resulting dp106.
 
 ## Open items
-- Run `scenes import` against an account with a saved DIY scene.
 - Visual confirmation of multi-color rendering (the device accepts the format).
 - The panel also knows `reverse_direction`'s siblings `lamp_number`,
   `lamp_number_user` and `music_sync_mode`, and the schema lists dp28

@@ -173,10 +173,16 @@ class Controller:
             light.speed = preset.speed
             return True
         effect_id = self.scenes.effect_id(name)
-        if effect_id is not None:
-            light.mode, light.effect, light.effect_id = "color", name, effect_id
-            return True
-        return False
+        if effect_id is None:
+            return False
+        if light.mode != "scene":
+            light.effect, light.effect_id = name, effect_id
+        elif light.scene_id in codec.SOLID_ONLY_SCENES and effect_id != codec.EFFECTS["solid"]:
+            log.warning("scene %s only supports solid; ignoring %s", light.scene, name)
+        else:
+            # As in the app: a scene keeps its id and colors, and animates differently.
+            light.scene_b1 = effect_id
+        return True
 
     def _recall_look(self, look: dict, dps: dict):
         dps[codec.DP_STATE] = look["dp106"]

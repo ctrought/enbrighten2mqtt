@@ -156,8 +156,8 @@ class TuyaOemApi:
     def device_properties(self, dev_id: str):
         """The panel's cloud storage for a device, where DIY scenes are kept."""
         last: TuyaOemError | None = None
-        # The panel names the API with a host-app prefix it resolves natively.
-        for prefix in ("thing", "tuya", "smartlife"):
+        # The panel calls it s.m.dev.property.get; other Tuya apps use these prefixes.
+        for prefix in ("s", "thing", "tuya", "smartlife"):
             try:
                 return self._call(f"{prefix}.m.dev.property.get", version="2.0",
                                   data={"devId": dev_id, "bizType": 0})

@@ -102,3 +102,11 @@ def test_custom_modes_finds_nested_records():
 def test_custom_modes_reads_lists():
     props = {"ui": {"data": {"value": {"modes": [_record(), _record(mode=19)]}}}}
     assert [r["mode"] for r in custom_modes(props)] == [18, 19]
+
+
+def test_mistakenly_learned_color_state_is_dropped(tmp_path):
+    p = tmp_path / "scenes.json"
+    p.write_text(json.dumps({"scenes": {"scene_00": "00004303e80#FF000000",
+                                        "scene_2a": "2a07012c03e8"}}))
+    names = SceneStore(str(p)).scene_names()
+    assert "scene_00" not in names and "scene_2a" in names
