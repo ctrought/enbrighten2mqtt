@@ -1,5 +1,6 @@
-# secrets & per-user data
-secrets/
+# secrets & per-user data (keep the dir, ignore its contents)
+secrets/*
+!secrets/.gitkeep
 devices.json
 /config.yaml
 *.apk

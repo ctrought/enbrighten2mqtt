@@ -107,7 +107,9 @@ def cmd_discover(args):
 
 
 def cmd_serve(args):
+    from .hassio import apply_addon_options
     from .mqtt.bridge import run
+    apply_addon_options()   # no-op unless running as a Home Assistant add-on
     run(args.config)
 
 
