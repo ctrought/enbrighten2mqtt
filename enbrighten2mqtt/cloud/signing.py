@@ -1,73 +1,71 @@
-"""Tuya mobile-API request signing.
+"""Tuya/Thing mobile-API request signing (as used by the Enbrighten app).
 
-Tuya's app SDK has used a few signing variants over the years. Rather than
-hard-code one, we express each as a ``SignScheme`` and pick based on what the
-APK analysis finds. All variants build a canonical string from the request
-parameters and HMAC/MD5 it with an app-derived key.
+Algorithm:
+  1. From the request params, keep only the whitelisted keys (SIGN_KEYS) whose
+     values are non-empty.
+  2. Sort those keys lexicographically.
+  3. The `postData` value is replaced by MD5(postData) (lowercase hex).
+  4. Join as `key=value` with `||` between pairs  ->  the string-to-sign.
+  5. sign = HMAC-SHA256(string-to-sign, HMAC_KEY), lowercase hex.
 
-The concrete recipe is pinned in Phase 1 against the real APK. Until then
-``default_scheme`` returns the most common modern variant (HMAC-SHA256 over
-sorted params, keyed by app_secret, optionally salted by the session secret).
+HMAC_KEY = "<cert_sha256>_<bmp_token>_<appSecret>", where cert_sha256 is the
+APK signing cert's SHA-256 as UPPERCASE colon-separated hex (32 bytes), bmp_token
+is decoded from assets/t_s.bmp for this appKey (see bmp_token.py), and appSecret
+is the app's Tuya secret (from BuildConfig).
+
+Everything here is deterministic from constants shipped in the APK, so an
+end user only needs to provide their Enbrighten email + password.
 """
 
 from __future__ import annotations
 
 import hashlib
 import hmac
-from dataclasses import dataclass
 
-# Params excluded from the signed canonical string (Tuya convention).
-_SKIP = {"sign", "postData"}
-
-
-def _canonical(params: dict) -> str:
-    """`key=value||key=value` over sorted keys, with postData hashed in."""
-    items = sorted((k, v) for k, v in params.items() if k not in _SKIP)
-    base = "||".join(f"{k}={v}" for k, v in items)
-    post = params.get("postData")
-    if post:
-        base += "||" + hashlib.sha256(post.encode()).hexdigest()
-    return base
+# Exact whitelist + order-independence from ThingApiSignManager (sorted at use).
+SIGN_KEYS = [
+    "a", "v", "lat", "lon", "lang", "deviceId", "appVersion", "ttid",
+    "isH5", "h5Token", "os", "clientId", "postData", "time", "requestId",
+    "et", "n4h5", "sid", "chKey", "sp",
+]
+PAIR_SEP = "||"
+KV_SEP = "="
 
 
-@dataclass
-class SignScheme:
-    algo: str = "hmac-sha256"   # or "md5"
-    use_session_secret: bool = True
-    use_bmp: bool = False
-    use_cert: bool = False
-
-    def _key(self, *, app_secret, session_secret, bmp_secret, cert_sha256):
-        parts = [app_secret]
-        if self.use_session_secret and session_secret:
-            parts.append(session_secret)
-        if self.use_bmp and bmp_secret:
-            parts.append(bmp_secret)
-        if self.use_cert and cert_sha256:
-            parts.append(cert_sha256)
-        return "_".join(parts)
-
-    def sign(self, params: dict, *, app_secret: str,
-             session_secret: str | None = None,
-             bmp_secret: str | None = None,
-             cert_sha256: str | None = None) -> str:
-        key = self._key(app_secret=app_secret, session_secret=session_secret,
-                        bmp_secret=bmp_secret, cert_sha256=cert_sha256)
-        msg = _canonical(params)
-        if self.algo == "md5":
-            return hashlib.md5((msg + key).encode()).hexdigest()
-        return hmac.new(key.encode(), msg.encode(), hashlib.sha256).hexdigest()
+def cert_sha256_colon(hex64: str) -> str:
+    """64-hex SHA-256 -> 'AA:BB:..' uppercase, 32 bytes (95 chars)."""
+    h = hex64.replace(":", "").upper()
+    return ":".join(h[i:i + 2] for i in range(0, len(h), 2))
 
 
-def default_scheme(creds: dict) -> SignScheme:
-    """Pick a scheme from what the APK yielded.
+def build_hmac_key(cert_sha256_hex: str, bmp_token: str, app_secret: str) -> str:
+    return f"{cert_sha256_colon(cert_sha256_hex)}_{bmp_token}_{app_secret}"
 
-    If the APK exposed a bmp token or cert hash, fold them in (newer SDK).
-    Otherwise use the classic HMAC-SHA256 scheme.
-    """
-    return SignScheme(
-        algo="hmac-sha256",
-        use_session_secret=True,
-        use_bmp=bool(creds.get("bmp_secret")),
-        use_cert=bool(creds.get("cert_sha256")),
-    )
+
+def _swap_sign_string(s: str) -> str:
+    # ThingApiSignManager.swapSignString on a 32-char md5-hex string.
+    return s[8:16] + s[0:8] + s[24:32] + s[16:24]
+
+
+def post_data_sign(post_data: str) -> str:
+    # postDataMD5Hex = swapSignString(md5_hex(postData)); md5AsBase64 is hex.
+    return _swap_sign_string(hashlib.md5(post_data.encode()).hexdigest())
+
+
+def string_to_sign(params: dict) -> str:
+    parts = []
+    for key in sorted(params.keys()):
+        if key not in SIGN_KEYS:
+            continue
+        val = params[key]
+        if val is None or val == "":
+            continue
+        if key == "postData":
+            val = post_data_sign(str(val))
+        parts.append(f"{key}{KV_SEP}{val}")
+    return PAIR_SEP.join(parts)
+
+
+def sign_request(params: dict, hmac_key: str) -> str:
+    sts = string_to_sign(params)
+    return hmac.new(hmac_key.encode(), sts.encode(), hashlib.sha256).hexdigest()

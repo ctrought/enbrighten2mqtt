@@ -1,23 +1,16 @@
-"""Tuya OEM mobile-API client.
+"""Tuya/Thing OEM mobile-API client for the Enbrighten app.
 
-Emulates what the Enbrighten Android app does when it logs in: authenticate
-with the user's own Enbrighten account against the OEM API host, list their
-homes and devices, and read back each device's ``localKey`` plus the product
-DP schema. We only ever touch the user's own account and devices.
+Logs into the user's own Enbrighten account (email + password) and reads back
+their devices' localKeys. Request signing is in signing.py and bmp_token.py.
+No Tuya developer project is needed — just the user's credentials.
 
-The request signing follows Tuya's mobile SDK scheme (HMAC-SHA256 over a sorted
-parameter string using a key derived from ``client_id`` + ``app_secret`` and,
-on newer SDKs, the signing-cert hash and the t_s.bmp token). The exact recipe
-is confirmed during Phase 1 from the APK; this module keeps the pieces
-pluggable so we can match whatever variant the app uses.
-
-Only stdlib + requests + cryptography, so it runs anywhere the bridge runs.
+Flow: email token.create -> RSA-encrypt password -> email.password.login ->
+location list -> per-home device list (each device carries its localKey).
 """
 
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
 import time
 import uuid
@@ -26,7 +19,7 @@ from pathlib import Path
 
 import requests
 
-from .signing import SignScheme, default_scheme
+from .signing import sign_request
 
 
 @dataclass
@@ -42,142 +35,125 @@ class Device:
     raw: dict
 
     def to_json(self) -> dict:
-        d = {k: getattr(self, k) for k in (
+        return {k: getattr(self, k) for k in (
             "dev_id", "name", "local_key", "product_id",
             "category", "ip", "version", "online")}
-        return d
 
 
 class TuyaOemError(RuntimeError):
     pass
 
 
-class TuyaOemApi:
-    """Minimal client for the Tuya OEM app API (`/api.json` gateway)."""
+def _rsa_encrypt(plain: str, public_key_hex: str, exponent_hex: str) -> str:
+    """RSA/ECB/PKCS1v1.5 encrypt, returns lowercase hex (Tuya login scheme)."""
+    from cryptography.hazmat.primitives.asymmetric import rsa, padding
+    from cryptography.hazmat.backends import default_backend
+    n = int(public_key_hex, 16)
+    e = int(exponent_hex, 16)
+    pub = rsa.RSAPublicNumbers(e, n).public_key(default_backend())
+    ct = pub.encrypt(plain.encode(), padding.PKCS1v15())
+    return ct.hex()
 
-    def __init__(self, creds: dict, *, scheme: SignScheme | None = None,
-                 session: requests.Session | None = None):
+
+class TuyaOemApi:
+    def __init__(self, creds: dict, *, session: requests.Session | None = None):
         self.host = creds.get("api_region_host", "a1-us.iotbing.com")
         self.client_id = creds["client_id"]
-        self.app_secret = creds["app_secret"]
-        self.bmp_secret = creds.get("bmp_secret")
-        self.cert_sha256 = creds.get("cert_sha256")
+        self.hmac_key = creds["hmac_key"]            # precomputed cert_bmp_secret
         self.country_code = creds.get("country_code", "1")
-        self.app_schema = creds.get("app_schema") or "tuyaSmart"
-        self.scheme = scheme or default_scheme(creds)
+        self.ttid = creds.get("ttid", "enbrightensmart")
+        self.ch_key = creds.get("ch_key", "")   # channel key seen in app traffic
         self.s = session or requests.Session()
-        self.s.headers["User-Agent"] = "TY-UA=APP/Android/1.0/SDK/1.0"
-        self.sid: str | None = None            # session id after login
-        self.session_secret: str | None = None  # per-session signing salt
-        self.device_id = uuid.uuid4().hex       # fake stable device install id
+        self.s.headers["User-Agent"] = "TY-UA=APP/Android/1.2.6/SDK/6.11.0"
+        self.device_id = uuid.uuid4().hex + uuid.uuid4().hex[:8]  # 40 hex
+        self.sid: str | None = None
 
     # -- low level ----------------------------------------------------------
 
     def _call(self, action: str, version: str = "1.0", data: dict | None = None,
               *, requires_sid: bool = True) -> dict:
-        now = int(time.time() * 1000)
         params = {
             "a": action,
             "v": version,
             "clientId": self.client_id,
-            "time": str(now // 1000),
-            "requestId": uuid.uuid4().hex,
-            "lang": "en",
-            "osSystem": "13",
             "os": "Android",
-            "ttid": f"sdk_tuya_{self.device_id}",
-            "et": "0.0.1",
-            "sdkVersion": "3.37.5",
-            "appVersion": "1.0.0",
-            "appRnVersion": "5.60",
-            "platform": "ONEPLUS",
+            "lang": "en",
+            "ttid": self.ttid,
             "deviceId": self.device_id,
+            "appVersion": "1.2.6",
+            "sdkVersion": "6.11.0",
+            "time": str(int(time.time())),
+            "requestId": str(uuid.uuid4()),
+            "et": "0",                     # plaintext postData (no et=3 encryption)
+            "chKey": self.ch_key,          # channel key (app constant), signed
+            "cp": "gzip",
+            "deviceCoreVersion": "6.11.0",
+            "appRnVersion": "5.99",
+            "osSystem": "14",
+            "nd": "1",
         }
+        if data is not None:
+            params["postData"] = json.dumps(data, separators=(",", ":"))
         if requires_sid:
             if not self.sid:
                 raise TuyaOemError("not logged in")
             params["sid"] = self.sid
-        payload = json.dumps(data or {}, separators=(",", ":"))
-        params["postData"] = payload
-        params["sign"] = self.scheme.sign(
-            params, app_secret=self.app_secret,
-            session_secret=self.session_secret,
-            bmp_secret=self.bmp_secret, cert_sha256=self.cert_sha256)
-        url = f"https://{self.host}/api.json"
-        r = self.s.post(url, params=params, timeout=15)
+        params["sign"] = sign_request(params, self.hmac_key)
+        r = self.s.post(f"https://{self.host}/api.json", data=params, timeout=15)
         r.raise_for_status()
         body = r.json()
         if not body.get("success", False):
             raise TuyaOemError(f"{action}: {body.get('errorCode')} "
                                f"{body.get('errorMsg') or body}")
-        return body.get("result", {})
+        return body.get("result", body)
 
     # -- auth ---------------------------------------------------------------
 
     def login(self, email: str, password: str) -> None:
-        """Email + password login (US region)."""
+        tok = self._call("thing.m.user.email.token.create", data={
+            "countryCode": self.country_code, "email": email,
+        }, requires_sid=False)
+        token = tok["token"]
+        pub, exp = tok["publicKey"], tok["exponent"]
         md5pw = hashlib.md5(password.encode()).hexdigest()
-        result = self._call(
-            "tuya.m.user.email.password.login", data={
-                "email": email,
-                "passwd": md5pw,
-                "countryCode": self.country_code,
-            }, requires_sid=False)
+        enc = _rsa_encrypt(token + "_" + md5pw, pub, exp)
+        result = self._call("thing.m.user.email.password.login", data={
+            "countryCode": self.country_code, "email": email,
+            "passwd": enc, "token": token, "ifencrypt": 1,
+        }, requires_sid=False)
         self.sid = result.get("sid")
-        self.session_secret = result.get("secret") or result.get("sessionSecret")
         if not self.sid:
             raise TuyaOemError("login returned no sid")
 
     # -- data ---------------------------------------------------------------
 
     def homes(self) -> list[dict]:
-        return self._call("tuya.m.location.list")
+        res = self._call("thing.m.location.extend.list")
+        return res if isinstance(res, list) else res.get("list", [])
 
     def devices(self) -> list[Device]:
-        """All devices across all of the account's homes."""
         out: list[Device] = []
         seen: set[str] = set()
         for home in self.homes():
-            gid = home.get("groupId") or home.get("gid")
-            raw = self._call("tuya.m.my.group.device.list",
-                             data={"gid": gid})
-            for d in raw:
+            gid = home.get("groupId") or home.get("gid") or home.get("id")
+            raw = self._call("thing.m.my.group.device.list", data={"gid": gid})
+            items = raw if isinstance(raw, list) else raw.get("deviceList", raw.get("list", []))
+            for d in items:
                 did = d.get("devId")
                 if not did or did in seen:
                     continue
                 seen.add(did)
                 out.append(Device(
-                    dev_id=did,
-                    name=d.get("name", did),
-                    local_key=d.get("localKey", ""),
-                    product_id=d.get("productId", ""),
-                    category=d.get("category", ""),
-                    ip=d.get("ip"),
-                    version=d.get("version"),
-                    online=bool(d.get("isOnline")),
-                    raw=d,
-                ))
+                    dev_id=did, name=d.get("name", did),
+                    local_key=d.get("localKey", ""), product_id=d.get("productId", ""),
+                    category=d.get("category", ""), ip=d.get("ip"),
+                    version=str(d.get("version") or ""), online=bool(d.get("isOnline")),
+                    raw=d))
         return out
-
-    def schema(self, product_id: str) -> dict:
-        """DP schema for a product (function + status definitions)."""
-        return self._call("tuya.m.device.ref.info.my.list",
-                          data={"devId": product_id})
-
-    def panel_bundle_url(self, product_id: str, ui: str | None = None) -> dict:
-        """RN panel bundle metadata; its JS holds the app's mode encoder."""
-        return self._call("tuya.m.app.rn.info", version="2.0",
-                          data={"productId": product_id, "ui": ui or ""})
-
-    def publish_dps(self, dev_id: str, dps: dict) -> dict:
-        """Cloud fallback: push DPs through the Tuya cloud to the device."""
-        return self._call("tuya.m.device.dp.publish", data={
-            "devId": dev_id,
-            "dps": json.dumps(dps, separators=(",", ":")),
-        })
 
 
 def save_devices(devices: list[Device], path: str = "devices.json") -> None:
+    import os
     p = Path(path)
     p.write_text(json.dumps([d.to_json() for d in devices], indent=2))
-    p.chmod(0o600)
+    os.chmod(p, 0o600)
