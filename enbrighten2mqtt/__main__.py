@@ -43,15 +43,17 @@ def cmd_login(args):
     api.login(email, password)
     devices = api.devices()
     save_devices(devices, args.out)
-    Path("schema").mkdir(exist_ok=True)
-    for d in devices:
-        if d.product_id:
-            try:
-                sch = api.schema(d.product_id)
-                Path(f"schema/{d.product_id}.json").write_text(
-                    json.dumps(sch, indent=2))
-            except Exception as e:  # noqa: BLE001
-                print(f"  schema fetch failed for {d.product_id}: {e}")
+    # Per-product DP schema fetch is a future feature; skip cleanly until the
+    # API client grows a schema() method rather than erroring per device.
+    if hasattr(api, "schema"):
+        Path("schema").mkdir(exist_ok=True)
+        for d in devices:
+            if d.product_id:
+                try:
+                    Path(f"schema/{d.product_id}.json").write_text(
+                        json.dumps(api.schema(d.product_id), indent=2))
+                except Exception as e:  # noqa: BLE001
+                    print(f"  schema fetch failed for {d.product_id}: {e}")
     print(f"Saved {len(devices)} device(s) to {args.out}")
     for d in devices:
         print(f"  {d.name:24} {d.dev_id}  key={'*' * len(d.local_key)}  "
