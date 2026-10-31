@@ -23,6 +23,8 @@ _VERSIONS = (3.4, 3.5, 3.3, 3.2, 3.1)
 
 _IO_TIMEOUT = 5.0       # status and writes wait for the device's reply
 _POLL_TIMEOUT = 0.2     # receive() must not hold up queued commands
+_ERR_EMPTY_REPLY = "904"    # tinytuya's "Unexpected Payload": an ack with no data,
+                            # which these devices send routinely; the link is fine
 
 
 class DeviceError(RuntimeError):
@@ -137,6 +139,9 @@ class LocalDevice:
         return data
 
     def _unwrap(self, data):
+        if isinstance(data, dict) and str(data.get("Err")) == _ERR_EMPTY_REPLY:
+            log.debug("device %s sent an empty reply", self.info.dev_id)
+            return None
         if isinstance(data, dict) and data.get("Err"):
             # tinytuya signals errors as dicts; drop the socket so we reconnect.
             log.warning("device %s error: %s", self.info.dev_id, data)
