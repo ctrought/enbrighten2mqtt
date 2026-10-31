@@ -1,0 +1,20 @@
+# secrets & per-user data
+secrets/
+devices.json
+/config.yaml
+*.apk
+
+# APK extraction artifacts
+apk_enbrighten/
+apk_work/
+*.bin
+
+# captures (may contain keys / device data) and screenshots
+captures/
+shots/
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/

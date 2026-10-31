@@ -1,0 +1,38 @@
+{
+  "switch_led": {
+    "mainDpCode": "switch_led",
+    "mainDpType": "Boolean",
+    "relationDpIdMaps": {
+      "switch_led": 20
+    },
+    "standardCode": "switch_led",
+    "standardType": "Boolean",
+    "strategyCode": "default",
+    "strategyValue": "{\"switch_led\":\"$\"}",
+    "valueRange": "{}"
+  },
+  "countdown": {
+    "mainDpCode": "countdown",
+    "mainDpType": "Integer",
+    "relationDpIdMaps": {
+      "countdown": 26
+    },
+    "standardCode": "countdown_1",
+    "standardType": "Integer",
+    "strategyCode": "default",
+    "strategyValue": "{\"countdown\":\"$\"}",
+    "valueRange": "{\"unit\":\"s\",\"min\":0,\"max\":86400,\"scale\":0,\"step\":1}"
+  },
+  "control_data": {
+    "mainDpCode": "control_data",
+    "mainDpType": "String",
+    "relationDpIdMaps": {
+      "control_data": 28
+    },
+    "standardCode": "control_data",
+    "standardType": "Json",
+    "strategyCode": "dj_v2_contr_alg",
+    "strategyValue": "{\"control_data\":\"$\"}",
+    "valueRange": "{\"change_mode\":{\"range\":[\"direct\",\"gradient\"]}, \"bright\":{\"min\":0,\"scale\":0,\"unit\":\"\",\"max\":1000,\"step\":1}, \"temperature\":{\"min\":0,\"scale\":0,\"unit\":\"\",\"max\":1000,\"step\":1}, \"h\":{\"min\":0,\"scale\":0,\"unit\":\"\",\"max\":360,\"step\":1},\"s\":{\"min\":0,\"scale\":0,\"unit\":\"\",\"max\":255,\"step\":1},\"v\":{\"min\":0,\"scale\":0,\"unit\":\"\",\"max\":255,\"step\":1}}"
+  }
+}

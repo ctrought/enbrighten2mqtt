@@ -1,0 +1,17 @@
+mqtt:
+  host: 127.0.0.1        # your Mosquitto / HA broker
+  port: 1883
+  username: null
+  password: null
+  base_topic: enbrighten2mqtt
+  discovery_prefix: homeassistant
+log_level: INFO
+# Devices are usually loaded from devices.json (written by `login`).
+# You can also list them here explicitly:
+# devices:
+#   - dev_id: ebxxxxxxxxxxxxxxxxxxxx
+#     ip: 192.0.2.10
+#     local_key: "xxxxxxxxxxxxxxxx"
+#     name: Eternity Landscape Lights
+#     product_id: wagmuetuwhn4lgr7
+#     version: 3.5

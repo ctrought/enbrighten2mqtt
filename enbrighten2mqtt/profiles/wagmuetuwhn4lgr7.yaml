@@ -1,0 +1,13 @@
+# Enbrighten Eternity Landscape Lights (RGBWIC) - Tuya productId wagmuetuwhn4lgr7
+product_id: wagmuetuwhn4lgr7
+protocol: 3.5
+category: dj
+bulbs: 12
+dps:
+  switch: 20          # bool power
+  countdown: 26       # int seconds
+  unknown101: 101     # bool (music/mic?)
+  mask: 104           # 12-char per-bulb on/off
+  state: 106          # packed color/scene/effect/speed/brightness
+state_format: "[mode][effect][speed:2][brightness:2](ncolors-1)#[WRGB...]"
+scale_max: 1000
