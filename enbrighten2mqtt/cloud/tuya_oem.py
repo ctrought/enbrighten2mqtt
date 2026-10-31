@@ -146,18 +146,28 @@ class TuyaOemApi:
     # -- data ---------------------------------------------------------------
 
     def homes(self) -> list[dict]:
-        res = self._call("thing.m.location.extend.list")
-        return res if isinstance(res, list) else res.get("list", [])
+        # Home/space list shown at app start: an array of HomeResponseBean,
+        # each with a `gid` (long) reused as the homeId for the device list.
+        res = self._call("m.life.home.space.list", version="1.0")
+        if isinstance(res, list):
+            return res
+        return res.get("list", res.get("spaceList", res.get("datas", [])))
 
     def devices(self) -> list[Device]:
         out: list[Device] = []
         seen: set[str] = set()
         for home in self.homes():
-            gid = home.get("groupId") or home.get("gid") or home.get("id")
-            raw = self._call("thing.m.my.group.device.list", data={"gid": gid})
-            items = raw if isinstance(raw, list) else raw.get("deviceList", raw.get("list", []))
+            gid = home.get("gid") or home.get("groupId") or home.get("id")
+            # Local device list -- the bean that carries each device's localKey
+            # v1.1, {homeId, groupType:"homeGroup"} -> {deviceList:[DeviceRespBeanEx]}).
+            raw = self._call("m.life.app.smart.local.device.list", version="1.1",
+                             data={"homeId": gid, "groupType": "homeGroup"})
+            if isinstance(raw, list):
+                items = raw
+            else:
+                items = raw.get("deviceList", raw.get("list", []))
             for d in items:
-                did = d.get("devId")
+                did = d.get("devId") or d.get("id")
                 if not did or did in seen:
                     continue
                 seen.add(did)
@@ -165,8 +175,8 @@ class TuyaOemApi:
                     dev_id=did, name=d.get("name", did),
                     local_key=d.get("localKey", ""), product_id=d.get("productId", ""),
                     category=d.get("category", ""), ip=d.get("ip"),
-                    version=str(d.get("version") or ""), online=bool(d.get("isOnline")),
-                    raw=d))
+                    version=str(d.get("verSw") or d.get("version") or ""),
+                    online=bool(d.get("isOnline")), raw=d))
         return out
 
 
