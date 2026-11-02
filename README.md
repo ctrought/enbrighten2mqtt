@@ -1,52 +1,48 @@
 # enbrighten2mqtt
 
-Local **LAN** control of Enbrighten Eternity (VIBE) landscape/eave lights in
-Home Assistant over MQTT — **no Tuya cloud, no Smart Life app, no re-pairing**.
+Control Enbrighten Eternity (VIBE) landscape and eave lights from Home Assistant
+over your LAN, with no re-pairing. The Tuya cloud is used only to fetch device
+keys and DIY scenes.
+
 Modeled on [govee2mqtt](https://github.com/wez/govee2mqtt).
 
-These lights are white-label **Tuya "Thing"** devices. The bridge logs into your
-Enbrighten account once to read each device's `localKey`, then talks the Tuya
-**LAN protocol** to the lights directly and exposes a full Home Assistant light
-over MQTT: on/off, brightness, speed, RGB + dedicated white, white temperature,
-21 animated effects, all 58 built-in scenes, your DIY scenes, multi-colour
-sequences, per-bulb on/off, auto-off timer and effect direction.
+> [!NOTE]
+> Tested on one model: Enbrighten Eternity Landscape Lights (`wagmuetuwhn4lgr7`,
+> Tuya LAN protocol 3.5). See [Supported devices](#supported-devices).
 
-> **Status:** working and validated on real hardware — Enbrighten Eternity
-> Landscape Lights, productId `wagmuetuwhn4lgr7`, protocol 3.5. The whole chain
-> (cloud login → localKey → LAN discovery → local control) is proven end to end.
-> See [Supported devices](#supported-devices--limitations) for what else should
-> work.
+## Features
 
-## How it works
+- **Full light control:** on/off, brightness, RGB plus dedicated white, and white
+  temperature (2200–6000K)
+- **Effects:** all 21, with adjustable speed and direction
+- **Scenes:** all 58 built-in presets, plus DIY and edited scenes from the app
+- **Colour sequences:** 1–6 colours
+- **Individual bulbs:** on/off for each of the 12 bulbs
+- **Extras:** auto-off timer and saved presets
+- **Two-way state:** changes from the app or the physical button show up in Home
+  Assistant
 
-```
-Home Assistant ──MQTT──> enbrighten2mqtt ──Tuya LAN──> your lights on your LAN
-   (MQTT discovery)         (this bridge)    (localKey)
-```
+## Contents
 
-**Cloud vs. local.** The Tuya cloud is touched *only* at startup, and *only* to
-read your devices' `localKey`s (the cloud never sees a control command). Once
-those keys are cached, discovery and all control are **100% local** — the bridge
-keeps working with the internet, or Tuya, down. You only need the cloud again
-when you **add** a device or **re-pair** one (re-pairing rotates its key).
+- [Quick start](#quick-start)
+- [How it works](#how-it-works)
+- [Install](#install)
+- [Configuration](#configuration)
+- [Home Assistant entities](#home-assistant-entities)
+- [Scenes](#scenes)
+- [MQTT topics](#mqtt-topics)
+- [Command line](#command-line)
+- [Supported devices](#supported-devices)
+- [Limitations](#limitations)
+- [Troubleshooting](#troubleshooting)
+- [Development](#development)
+- [Security](#security)
+- [Legal](#legal)
 
-## Install
+## Quick start
 
-Pick one. All three use the same bridge; the only per-user settings are your
-**Enbrighten email + password** and the **MQTT broker**.
-
-### A. Home Assistant add-on  *(HA OS / Supervised — easiest)*
-
-1. **Settings → Add-ons → Add-on store → ⋮ → Repositories**, add this repo's URL.
-2. Install **Enbrighten2MQTT**, open **Configuration**, set `enbrighten_email`
-   and `enbrighten_password`. Leave `mqtt_*` blank to use your existing
-   Mosquitto add-on automatically.
-3. **Start**. The lights appear in Home Assistant via MQTT discovery.
-
-The add-on uses host networking (required for LAN discovery) and pulls the
-broker from HA's MQTT service, so there's nothing else to configure.
-
-### B. Standalone container  *(HA Container/Core, or any Docker host)*
+You need an Enbrighten account with the lights already paired in the app, an MQTT
+broker connected to Home Assistant, and a host on the same LAN as the lights.
 
 ```bash
 docker run -d --name enbrighten2mqtt --network host \
@@ -57,206 +53,279 @@ docker run -d --name enbrighten2mqtt --network host \
   ghcr.io/ctrought/enbrighten2mqtt:latest
 ```
 
-`--network host` is **required**: LAN discovery is a UDP broadcast. The `/data`
-volume persists the fetched key cache (`devices.json`).
+The lights then appear in Home Assistant through MQTT discovery.
 
-### C. From source  *(development)*
+## How it works
+
+```text
+Home Assistant <--MQTT--> enbrighten2mqtt <--Tuya LAN protocol--> your lights
+                                 |
+                                 +--HTTPS, at login only--> Tuya cloud
+```
+
+Each light needs a `localKey` to talk to it directly. The bridge logs in to your
+Enbrighten account to read those keys, and to read any DIY scenes, then caches the
+keys in `devices.json`.
+
+Control commands never go through the cloud. Once the keys are cached, the bridge
+keeps working if the internet or Tuya is down. It only needs to log in again when
+you add or re-pair a light, or to pick up new DIY scenes.
+
+The phone app keeps working, because the bridge uses the keys the cloud already
+issued.
+
+## Install
+
+### Container
+
+Use this for Home Assistant Container or Core, or any Docker or Podman host. This
+is the most thoroughly tested option.
+
+Run the command in [Quick start](#quick-start), or use Compose:
+
+```yaml
+services:
+  enbrighten2mqtt:
+    image: ghcr.io/ctrought/enbrighten2mqtt:latest
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      ENBRIGHTEN_EMAIL: you@example.com
+      ENBRIGHTEN_PASSWORD: your-password
+      MQTT_HOST: your-broker-host
+    volumes:
+      - /srv/enbrighten2mqtt:/data
+```
+
+Host networking is required because LAN discovery uses UDP broadcast. The `/data`
+volume keeps the key cache and your scenes.
+
+### Home Assistant app (add-on)
+
+Use this for Home Assistant OS or Supervised. It runs the same image, but the
+install steps themselves haven't been tested yet.
+
+1. Go to **Settings > Apps > Install app**, then **⋮ > Repositories**, and add
+   `https://github.com/ctrought/enbrighten2mqtt`.
+2. Install **Enbrighten2MQTT**.
+3. In **Configuration**, set `enbrighten_email` and `enbrighten_password`. Leave
+   the `mqtt_*` options blank to use your existing MQTT broker app.
+4. Start it.
+
+### From source
 
 ```bash
 pip install -e .
-cp config.example.yaml config.yaml      # set broker + account
+cp config.example.yaml config.yaml    # then set your broker and account
 enbrighten2mqtt serve
 ```
 
 ## Configuration
 
-Everything is settable by **environment variable** or **config file**; env wins.
-The HA add-on exposes the same settings as options.
+Set options with environment variables or `config.yaml`. Environment variables
+take priority. The Home Assistant app has the same settings as options.
 
-| Env var | Config (`config.yaml`) | Add-on option | Meaning |
+| Environment variable | `config.yaml` | App option | Purpose |
 |---|---|---|---|
-| `ENBRIGHTEN_EMAIL` | `enbrighten.email` | `enbrighten_email` | account email |
-| `ENBRIGHTEN_PASSWORD` | `enbrighten.password` | `enbrighten_password` | account password |
-| `MQTT_HOST` | `mqtt.host` | `mqtt_host` | broker host (blank add-on = HA's) |
-| `MQTT_PORT` | `mqtt.port` | `mqtt_port` | broker port (1883) |
-| `MQTT_USER` / `MQTT_PASS` | `mqtt.username` / `.password` | `mqtt_user` / `mqtt_pass` | broker auth |
-| `DEVICES_REFRESH` | `enbrighten.refresh` | `device_refresh` | `if_missing` (default) / `always` / `never` |
-| `OEM_CREDS` | `enbrighten.oem_creds` | — (baked / `/config/oem.json`) | path to the app constants |
-| `DEVICES_FILE` | `enbrighten.devices_file` | — (`/data/devices.json`) | key-cache path |
-| `LOG_LEVEL` | `log_level` | `log_level` | `INFO` / `DEBUG` / … |
+| `ENBRIGHTEN_EMAIL` | `enbrighten.email` | `enbrighten_email` | Account email |
+| `ENBRIGHTEN_PASSWORD` | `enbrighten.password` | `enbrighten_password` | Account password |
+| `MQTT_HOST` | `mqtt.host` | `mqtt_host` | Broker host. Blank in the app means Home Assistant's broker |
+| `MQTT_PORT` | `mqtt.port` | `mqtt_port` | Broker port (default `1883`) |
+| `MQTT_USER` | `mqtt.username` | `mqtt_user` | Broker username |
+| `MQTT_PASS` | `mqtt.password` | `mqtt_pass` | Broker password |
+| `DEVICES_REFRESH` | `enbrighten.refresh` | `device_refresh` | When to log in: `if_missing` (default), `always` or `never` |
+| `OEM_CREDS` | `enbrighten.oem_creds` | – | Path to the [app constants](#app-constants) |
+| `DEVICES_FILE` | `enbrighten.devices_file` | – | Path to the key cache |
+| `LOG_LEVEL` | `log_level` | `log_level` | `INFO`, `DEBUG` and so on |
 
-> **Security:** prefer env vars / add-on options over putting your password in a
-> committed `config.yaml` (it's gitignored here for that reason).
+To skip the cloud entirely, list your devices and their keys in `config.yaml`. See
+[`config.example.yaml`](config.example.yaml).
 
-On startup the bridge logs in automatically when the key cache is missing (or
-`DEVICES_REFRESH=always`), caches `devices.json`, discovers each light on the
-LAN, and serves — **no manual steps**. You can also pin devices explicitly and
-skip the cloud entirely (see `config.example.yaml`).
+### App constants
 
-### `oem.json` — the app constants
+`oem.json` holds the Enbrighten app's own Tuya API constants: app key, secret and
+signing values. They're the same for every user and aren't your login. The
+published image includes them, so you don't need to do anything.
 
-`oem.json` holds the **Enbrighten app's own** Tuya API constants (app key,
-secret, signing key, …), extracted once from the public APK. They are **the same
-for every user** — *not* your login — so the published image **bakes them in**
-and you never deal with them. (Building the image yourself? Drop your `oem.json`
-in `secrets/`; the add-on also accepts one in its config folder.)
+If you build the image yourself, put your own `oem.json` in `secrets/`. The Home
+Assistant app also accepts one in its config folder.
 
 ## Home Assistant entities
 
-Each device appears with these entities, via MQTT discovery:
+Each light gets these entities:
 
-| Entity | What it does |
+| Entity | Type | What it does |
+|---|---|---|
+| Light | `light` | On/off, brightness, RGBW, white temperature and a list of every effect and scene |
+| Speed | `number` | Animation speed, 0–100% |
+| Effect | `select` | The animation, such as `solid`, `twinkle`, `chase` or `flame` |
+| Scene | `select` | Built-in, learned and DIY scenes, plus saved presets |
+| Colors | `text` | 1–6 colours, comma-separated, as `#RRGGBB` or `#RRGGBBWW` |
+| Bulb 1–12 | `switch` | Turns one bulb on or off |
+| Auto-off timer | `number` | Minutes until the light turns off. `0` cancels it |
+| Reverse effect direction | `switch` | Runs effects the other way |
+| Preset name | `text` | The name to use for Save preset |
+| Save preset | `button` | Saves what's showing now |
+| Connectivity | `binary_sensor` | Whether the bridge can reach the light |
+
+### How effects and scenes interact
+
+These work the same way as in the app:
+
+| You do this | What happens |
 |---|---|
-| **Light** | on/off, brightness, RGBW, white temperature (2200–6000K), effect list with every effect and scene |
-| **Speed** (number) | animation speed, 0–100% |
-| **Effect** (select) | `solid`, `twinkle`, `strobe`, `pulse`, `wave_chase`, `chase`, `wave`, `flame`, … |
-| **Scene** (select) | built-in, learned and DIY scenes, plus saved looks |
-| **Colors** (text) | the 1–6 colour sequence: `#RRGGBB` or `#RRGGBBWW`, comma-separated |
-| **Bulb 1–12** (switch) | turn individual bulbs on or off |
-| **Auto-off timer** (number) | minutes until the light turns off; 0 cancels |
-| **Reverse effect direction** (switch) | run effects the other way |
-| **Preset name** (text) + **Save preset** (button) | save what's showing now as a look |
-| **Connectivity** (binary sensor) | whether the bridge can reach the light |
+| Choose an effect during a scene | The scene and its colours stay, and only the animation changes |
+| Reselect the scene | Its default effect and speed come back |
+| Set a colour | The light leaves the scene, and Scene shows as unknown |
 
-Effects work on scenes as they do in the app: choosing an effect while a scene is
-active keeps the scene and its colours and only changes the animation. Reselecting
-the scene restores its default effect and speed, so use Save preset to keep a
-combination. Setting a colour leaves the scene, and Scene then reports as unknown.
-The Every Day scenes only support `solid`, as in the app.
+To keep an effect you've chosen for a scene, use **Save preset**. Reselecting the
+original scene will otherwise reset it.
 
-As in the app, speed has no visible effect on `solid`, `blocking`, `drift` and
-`shimmer`, and brightness has none on `lightning`.
+Some settings have no visible effect, as in the app:
 
-### Scenes and DIY
+- Speed does nothing on `solid`, `blocking`, `drift` and `shimmer`.
+- Brightness does nothing on `lightning`.
+- Every Day scenes only support `solid`.
 
-The device has no way to list scenes, so they come from four places:
+## Scenes
 
-- **Built-in:** all 58 presets from the app's Celebration, Every Day and Game Day
-  tabs ship with the bridge.
-- **DIY and edited presets:** these live in the app's cloud storage. They're
-  imported whenever the bridge logs in (`DEVICES_REFRESH=always`, or when the key
-  cache is missing), or on demand with `enbrighten2mqtt scenes import`. After that
-  they're recalled locally. A DIY scene made later needs another import.
-- **Learned:** any scene id the device reports that the bridge doesn't know, such
-  as from a newer app or the physical button, is saved as `scene_2a` and appears
-  in Home Assistant straight away. Selecting a DIY scene in the app therefore
-  works even without an import, but it needs a rename to get a friendly name.
-- **Saved looks:** type a name in Preset name and press Save preset. This stores
-  the current colours, effect, speed, brightness and bulb mask. Looks live on the
-  bridge and don't appear in the app.
+The lights can't list their scenes, so the bridge gets them from four places:
 
-Learned scenes and looks are kept in `scenes.json` beside `devices.json`.
+| Source | Where it comes from | Keeping it up to date |
+|---|---|---|
+| **Built-in** | The 58 presets from the app's Celebration, Every Day and Game Day tabs | Included with the bridge |
+| **DIY and edited** | The app's cloud storage, read when the bridge logs in | Run an [import](#command-line), then restart |
+| **Learned** | Any unknown scene the light reports, saved with a name like `scene_2a` | Automatic. [Rename it](#mqtt-topics) if you like |
+| **Saved presets** | Saved from Home Assistant with Save preset | Stored on the bridge only, so they don't appear in the app |
 
-### Automation topic
+Imported scenes are recalled locally, so only the import uses the cloud. A DIY
+scene selected in the app still appears as a learned scene without an import, but
+it won't have its name.
 
-`enbrighten2mqtt/<devId>/set/advanced` takes JSON:
+Learned, imported and saved scenes are kept in `scenes.json`, next to
+`devices.json`.
 
-```json
-{"colors":[{"r":255},{"g":255},{"b":255}], "speed":300}
-{"mask":"110011001100"}          // per-bulb on/off (12 bulbs)
-{"scene":"rainbow"}
-{"countdown":600}                // seconds
-{"rename_scene":{"from":"scene_2a","to":"Porch party"}}
-{"delete_scene":"Porch party"}   // learned scene, imported scene or look
-```
+## MQTT topics
 
-Live attributes (speed, mode, per-bulb mask, full colour list, raw `dp106`) are
-published to `enbrighten2mqtt/<devId>/attributes`, and show on the light entity.
+Live state is published to `enbrighten2mqtt/<devId>/attributes` and is also shown
+on the light entity. It includes speed, mode, the bulb mask, the full colour list
+and the raw `dp106` value.
 
-## CLI
+For automations, send JSON to `enbrighten2mqtt/<devId>/set/advanced`:
 
-The bridge is also a CLI (handy for setup and troubleshooting):
+| Purpose | Payload |
+|---|---|
+| Set colours and speed | `{"colors":[{"r":255},{"g":255},{"b":255}],"speed":300}` |
+| Set bulbs on or off | `{"mask":"110011001100"}` |
+| Select a scene | `{"scene":"rainbow"}` |
+| Turn off after 10 minutes | `{"countdown":600}` |
+| Rename a scene | `{"rename_scene":{"from":"scene_2a","to":"Porch party"}}` |
+| Delete a learned scene, imported scene or preset | `{"delete_scene":"Porch party"}` |
 
-```
-enbrighten2mqtt login       # fetch localKeys -> devices.json (email + password)
-enbrighten2mqtt list        # show cached devices
-enbrighten2mqtt discover    # find devices on the LAN and show their IPs
-enbrighten2mqtt probe --ip <ip> --device-id <id> --local-key <key>
-enbrighten2mqtt serve       # run the MQTT bridge (what the container does)
-enbrighten2mqtt scenes list     # every scene and effect the bridge knows
-enbrighten2mqtt scenes import   # fetch DIY and edited scenes from the app's cloud
-enbrighten2mqtt scenes capture  # name scenes as you select them in the app
-```
+## Command line
 
-`serve` does `login` for you on startup; the standalone `login`/`discover`
-commands are mainly for debugging.
+`serve` logs in by itself when it needs to. The other commands are mostly for setup
+and troubleshooting.
 
-## Supported devices & limitations
+| Command | What it does |
+|---|---|
+| `enbrighten2mqtt serve` | Runs the MQTT bridge. This is what the container does |
+| `enbrighten2mqtt login` | Fetches device keys into `devices.json` |
+| `enbrighten2mqtt list` | Shows cached devices |
+| `enbrighten2mqtt discover` | Finds lights on the LAN and shows their IPs |
+| `enbrighten2mqtt probe --ip <ip> --device-id <id> --local-key <key>` | Tests a connection to one light |
+| `enbrighten2mqtt scenes list` | Shows every scene and effect the bridge knows |
+| `enbrighten2mqtt scenes import` | Fetches DIY and edited scenes from the cloud |
+| `enbrighten2mqtt scenes capture` | Names scenes as you select them in the app |
 
-**Tested:** Enbrighten Eternity Landscape Lights, productId `wagmuetuwhn4lgr7`,
-LAN protocol 3.5. This is the only model verified end to end.
+## Supported devices
 
-**What is generic vs. model-specific:**
+**Tested:** Enbrighten Eternity Landscape Lights, product ID `wagmuetuwhn4lgr7`,
+Tuya LAN protocol 3.5.
 
-- *Generic* (works for any device on your account): the cloud login + `localKey`
-  retrieval, LAN discovery, protocol-version handling, and the MQTT/HA plumbing.
-- *Model-specific*: how a light's state is encoded. The Eternity packs
-  everything into one `dp106` string, decoded by `codec/eternity.py` and
-  described by `profiles/wagmuetuwhn4lgr7.yaml` / `PROTOCOL.md`. **Other Tuya
-  light models use different datapoints**, so colour/effects won't map correctly
-  until a profile/codec for that product is added. Basic on/off may work via the
-  common switch datapoint, but treat anything beyond the tested model as
-  unverified.
+Other lights may partly work:
 
-Device control limits:
+- **Works with any device on your account:** login, key retrieval, LAN discovery,
+  protocol version detection and the MQTT plumbing.
+- **Specific to this model:** how the light's state is encoded. The Eternity packs
+  nearly everything into one value (`dp106`). Other Tuya lights use different
+  datapoints, so colours and effects won't map correctly without their own codec.
+  Basic on/off may work, but it's unverified.
 
-- **No per-bulb colour.** The protocol has per-bulb on/off and a 1–6 colour
-  sequence, and the app offers nothing finer.
-- **Bulb count is fixed at 12** in Home Assistant. The app supports cut or extended
-  strands; other lengths would need the switch count made configurable.
+To add a model, see `codec/eternity.py`, `profiles/wagmuetuwhn4lgr7.yaml` and
+[`PROTOCOL.md`](PROTOCOL.md).
+
+## Limitations
+
+- **Per-bulb colour isn't possible.** The protocol has per-bulb on/off and a
+  sequence of 1–6 colours, and the app offers nothing finer.
+- **The bulb count is fixed at 12.** The app supports cut or extended strands, but
+  other lengths would need a configurable number of switches.
 - **Schedules aren't exposed.** They're Tuya cloud timers rather than device
-  datapoints; use Home Assistant automations instead.
-- **DIY scenes can't be created from Home Assistant in the app.** Saved looks are
-  the equivalent, and stay on the bridge.
-- White temperature between the app's six presets is interpolated.
+  settings. Use Home Assistant automations instead.
+- **DIY scenes can't be created in the app from Home Assistant.** Saved presets are
+  the equivalent, but stay on the bridge.
+- **White temperature is approximate** between the app's six presets.
+- **App updates could break login.** Login follows the app's current API signing
+  (Thing SDK 6.11.0). Control of lights with cached keys doesn't depend on this.
 
-Other known limitations:
+## Troubleshooting
 
-- The bridge must be on the **same LAN/broadcast domain** as the lights (UDP
-  discovery). Across VLANs/subnets, make the device subnet reachable or pin IPs
-  in `config.yaml`.
-- **Re-pairing** a device in the Enbrighten app **rotates its `localKey`** — run
-  `login` again (or set `DEVICES_REFRESH=always`).
-- Cloud login tracks the Enbrighten app's current API signing (Thing SDK
-  6.11.0); a future app change could require updating `oem.json` / the signer.
-- The HA add-on runs the same validated image, but add-on *installation* on HA
-  OS depends on your setup; the standalone container is the most thoroughly
-  exercised path.
+| Problem | What to do |
+|---|---|
+| Lights stop responding after re-pairing | Re-pairing changes the key. Run `enbrighten2mqtt login`, or set `DEVICES_REFRESH=always`, then restart |
+| No lights discovered | The bridge must be on the same broadcast domain and needs host networking. Across VLANs or subnets, set each light's IP in `config.yaml` |
+| New or edited DIY scene is missing or out of date | Run `enbrighten2mqtt scenes import`, or set `DEVICES_REFRESH=always`, then restart |
+| Light connects intermittently | These lights serve one LAN session at a time. Make sure nothing else, such as a second bridge, is connected directly |
+| More detail needed | Set `LOG_LEVEL=DEBUG` |
 
-## Building & releasing
-
-A `Makefile` runs the whole pipeline locally (no CI service needed). It uses
-**podman** by default, or **docker** (`make … ENGINE=docker`) — multi-arch push
-goes through `podman manifest` or `docker buildx` accordingly. It hardcodes no
-account: `OWNER` is parsed from your git remote and everything is overridable
-(`make push OWNER=you`).
+## Development
 
 ```bash
-make ci                 # test + lint + build the image locally
-make login              # registry login (uses $GHCR_TOKEN or `gh auth token`)
-make release            # test, then multi-arch push of :<version> and :latest
-make tag                # create the git tag vX.Y.Z
+make test     # unit tests
+make ci       # tests, lint and a local image build
 ```
 
-Versioning is semver: the git tag is `vX.Y.Z`, the image tags are `X.Y.Z` and
-`latest`. Bump `version` in `pyproject.toml` (and the add-on's `config.yaml`
-`version`) per release. GHCR is free for public images.
+The Makefile uses Podman by default. Add `ENGINE=docker` to use Docker. It reads
+the image owner from your git remote, or you can set `OWNER=you`.
 
+To release:
 
-## Layout
+1. Bump `version` in `pyproject.toml` and `ha-addon/config.yaml`.
+2. Run `make login` and `make release` to test and push a multi-arch image tagged
+   `X.Y.Z` and `latest`.
+3. Run `make tag` to create the git tag `vX.Y.Z`, then push it.
 
-- `enbrighten2mqtt/cloud/` — Tuya OEM mobile API client (login, device list)
-- `enbrighten2mqtt/local/` — tinytuya LAN wrapper + broadcast discovery
-- `enbrighten2mqtt/codec/eternity.py` — `dp106` encode/decode (the protocol)
-- `enbrighten2mqtt/controller.py` — state-preserving device control
-- `enbrighten2mqtt/scenes.py` — learned scenes, DIY import, saved looks
-- `enbrighten2mqtt/mqtt/bridge.py` — MQTT + HA discovery + auto-login bootstrap
-- `profiles/wagmuetuwhn4lgr7.yaml` — per-product datapoint map
-- `ha-addon/` — Home Assistant add-on manifest
-- `tests/` — codec, controller, signing, config tests (`pytest`)
+| Path | Contents |
+|---|---|
+| `enbrighten2mqtt/cloud/` | Tuya mobile API client: login, device list, DIY scenes |
+| `enbrighten2mqtt/local/` | LAN connection and broadcast discovery, using tinytuya |
+| `enbrighten2mqtt/codec/eternity.py` | `dp106` encoding and decoding |
+| `enbrighten2mqtt/controller.py` | Device control that preserves state |
+| `enbrighten2mqtt/scenes.py` | Learned scenes, DIY import and saved presets |
+| `enbrighten2mqtt/mqtt/bridge.py` | MQTT, Home Assistant discovery and automatic login |
+| `enbrighten2mqtt/profiles/` | Datapoint map for each product |
+| `ha-addon/` | Home Assistant app manifest |
+| `tests/` | Unit tests (`pytest`) |
 
-## Safety / scope
+Protocol details are in [`PROTOCOL.md`](PROTOCOL.md).
 
-Secrets (`secrets/`, `devices.json`, `config.yaml`, `.passwd`) are gitignored.
-This controls only your own devices, on your own LAN, using keys already issued
-to your own account.
+## Security
+
+- Prefer environment variables or app options for your password. `config.yaml` is
+  gitignored, but it's still a plain text file.
+- `devices.json` holds your device keys, so keep it private. `secrets/`,
+  `devices.json`, `scenes.json`, `config.yaml` and `.passwd` are all gitignored.
+- The bridge connects to the broker without TLS. Use broker authentication, and treat
+  your broker as able to control your lights.
+
+## Legal
+
+This is an independent project. It isn't affiliated with, endorsed by or supported
+by Jasco, Enbrighten or Tuya. Product names and trademarks belong to their owners
+and are used only to identify compatible devices.
+
+It's meant for controlling your own devices with your own account. You're
+responsible for following the terms that apply to your account and devices.
+
+Licensed under the [Apache License 2.0](LICENSE), and provided without warranty.
