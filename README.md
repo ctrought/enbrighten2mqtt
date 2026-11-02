@@ -37,6 +37,7 @@ Modeled on [govee2mqtt](https://github.com/wez/govee2mqtt).
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
 - [Security](#security)
+- [AI disclosure](#ai-disclosure)
 - [Legal](#legal)
 
 ## Quick start
@@ -252,8 +253,8 @@ Other lights may partly work:
   datapoints, so colours and effects won't map correctly without their own codec.
   Basic on/off may work, but it's unverified.
 
-To add a model, see `codec/eternity.py`, `profiles/wagmuetuwhn4lgr7.yaml` and
-[`PROTOCOL.md`](PROTOCOL.md).
+The bridge currently treats every device on your account as this model. To add
+another, see [Adding support for a new device](docs/adding-devices.md).
 
 ## Limitations
 
@@ -304,7 +305,8 @@ To release:
 | `enbrighten2mqtt/controller.py` | Device control that preserves state |
 | `enbrighten2mqtt/scenes.py` | Learned scenes, DIY import and saved presets |
 | `enbrighten2mqtt/mqtt/bridge.py` | MQTT, Home Assistant discovery and automatic login |
-| `enbrighten2mqtt/profiles/` | Datapoint map for each product |
+| `enbrighten2mqtt/profiles/` | Datapoint reference for each product |
+| `docs/adding-devices.md` | How to add support for a new device |
 | `ha-addon/` | Home Assistant app manifest |
 | `tests/` | Unit tests (`pytest`) |
 
@@ -318,6 +320,11 @@ Protocol details are in [`PROTOCOL.md`](PROTOCOL.md).
   `devices.json`, `scenes.json`, `config.yaml` and `.passwd` are all gitignored.
 - The bridge connects to the broker without TLS. Use broker authentication, and treat
   your broker as able to control your lights.
+
+## AI disclosure
+
+Built with substantial AI assistance (Claude Code). I directed the work and tested
+it on my own Eternity Landscape Lights. Other models are untested.
 
 ## Legal
 
