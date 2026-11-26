@@ -170,7 +170,8 @@ Each light gets these entities:
 | Speed | `number` | Animation speed, 0–100% |
 | Effect | `select` | The animation, such as `solid`, `twinkle`, `chase` or `flame` |
 | Scene | `select` | Built-in, learned and DIY scenes, plus saved presets |
-| Colors | `text` | 1–6 colours, comma-separated, as `#RRGGBB` or `#RRGGBBWW` |
+| Color 1–6 | `light` | One colour of the sequence each, with Home Assistant's colour picker. Turning one on adds it to the sequence, and turning it off removes it. Brightness dims that colour only |
+| Colors | `text` | The whole sequence as text, comma-separated, as `#RRGGBB` or `#RRGGBBWW` |
 | Bulb 1–12 | `switch` | Turns one bulb on or off |
 | Auto-off timer | `number` | Minutes until the light turns off. `0` cancels it |
 | Reverse effect direction | `switch` | Runs effects the other way |

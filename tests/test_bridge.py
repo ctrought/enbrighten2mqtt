@@ -221,6 +221,71 @@ def test_bad_colors_rejected(bad):
         B.parse_colors(bad)
 
 
+# -- colour slots -------------------------------------------------------------
+
+def test_color_slots_discovered_as_lights(bridge):
+    p = bridge._discovery_payloads(DEV)
+    conf = p["color_3"][1]
+    assert p["color_3"][0] == "light" and conf["name"] == "Color 3"
+    assert conf["supported_color_modes"] == ["rgbw"] and conf["schema"] == "json"
+    assert conf["command_topic"] == "home/lights/devabc/set/color/3"
+    assert sum(k.startswith("color_") for k in p) == B.MAX_COLORS
+
+
+def test_slot_state_splits_brightness_from_hue():
+    cols = [Color(r=128, g=64), Color(b=255)]
+    assert B.slot_state(cols, 1) == {
+        "state": "ON", "color_mode": "rgbw", "brightness": 128,
+        "color": {"r": 255, "g": 128, "b": 0, "w": 0}}
+    assert B.slot_state(cols, 3) == {"state": "OFF"}
+
+
+def test_slot_picker_keeps_brightness():
+    cols = [Color(r=128), Color(b=255)]
+    assert B.apply_slot(cols, 1, {"state": "ON", "color": {"g": 255}}) == [
+        Color(g=128), Color(b=255)]
+    assert B.apply_slot(cols, 2, {"brightness": 51}) == [Color(r=128), Color(b=51)]
+
+
+def test_slot_on_past_end_pads_to_position():
+    cols = [Color(r=255)]
+    out = B.apply_slot(cols, 3, {"state": "ON", "color": {"g": 255}})
+    assert out == [Color(r=255), Color(g=255), Color(g=255)]
+    # turned on with no colour: reuse the last one
+    assert B.apply_slot(cols, 2, {"state": "ON"}) == [Color(r=255), Color(r=255)]
+
+
+def test_slot_off_removes_but_keeps_one():
+    cols = [Color(r=255), Color(g=255), Color(b=255)]
+    assert B.apply_slot(cols, 2, {"state": "OFF"}) == [Color(r=255), Color(b=255)]
+    assert B.apply_slot(cols, 5, {"state": "OFF"}) == cols
+    with pytest.raises(ValueError):
+        B.apply_slot([Color(r=255)], 1, {"state": "OFF"})
+
+
+def test_slot_command_patches_current_colors(bridge):
+    ctrl = bridge.workers["devabc"].ctrl
+    ctrl.state.light.colors = [Color(r=255), Color(g=255)]
+    bridge._route("home/lights/devabc/set/color/2",
+                  json.dumps({"state": "ON", "color": {"r": 0, "g": 0, "b": 255}}))
+    assert calls(bridge) == [{"colors": [Color(r=255), Color(b=255)]}]
+
+
+def test_bad_slot_rejected(bridge):
+    with pytest.raises(ValueError):
+        bridge._route("home/lights/devabc/set/color/7", json.dumps({"state": "ON"}))
+
+
+def test_state_publishes_each_slot(bridge):
+    st = DeviceState()
+    st.light.colors = [Color(r=255), Color(b=255)]
+    bridge._publish_state(DEV, st)
+    assert json.loads(bridge.client.published["home/lights/devabc/color/2"])[
+        "color"] == {"r": 0, "g": 0, "b": 255, "w": 0}
+    assert json.loads(bridge.client.published["home/lights/devabc/color/3"]) == {
+        "state": "OFF"}
+
+
 # -- LAN rescans --------------------------------------------------------------
 
 def test_rescan_wakes_offline_worker(bridge, monkeypatch):

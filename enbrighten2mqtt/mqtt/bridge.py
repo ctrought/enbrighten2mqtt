@@ -10,6 +10,8 @@ HA entities per device, via MQTT discovery:
   - number: Speed (%), Auto-off timer (minutes)
   - select: Effect, Scene
   - switch: Bulb 1-12, Reverse effect direction
+  - light: Color 1-6, one per colour in the sequence, so each gets HA's
+    colour picker (off = not in the sequence)
   - text: Colors (1-6 colour sequence), Preset name
   - button: Save preset
   - binary_sensor: Connectivity
@@ -50,6 +52,8 @@ COLORS_PATTERN = rf"^{_HEX_COLOR}(?:, *{_HEX_COLOR}){{0,5}}$"
 MIRED_MIN = round(1_000_000 / codec.KELVIN_MAX)
 MIRED_MAX = round(1_000_000 / codec.KELVIN_MIN)
 
+MAX_COLORS = 6
+
 # How often unknown Tuya devices on the LAN may prompt an account login, and
 # how long one found not to be on the account is left alone.
 CLOUD_RECHECK = 3600
@@ -74,6 +78,63 @@ def parse_colors(text: str) -> list[Color]:
     if not 1 <= len(out) <= 6:
         raise ValueError("need 1 to 6 colours")
     return out
+
+
+def _level(c: Color) -> int:
+    return max(c.r, c.g, c.b, c.w)
+
+
+def _scaled(c: Color, level: int) -> Color:
+    """The same colour with its brightest channel at `level` (0-255)."""
+    m = _level(c)
+    if not m:
+        return Color(w=level)
+    return Color(*(round(x * level / m) for x in (c.r, c.g, c.b, c.w)))
+
+
+def slot_state(colors: list[Color], n: int) -> dict:
+    """Light state for colour `n` of the sequence; off when there isn't one.
+
+    HA's colour picker gives a hue at full value plus a separate brightness, so
+    a dim colour is reported as its full-value hue and its level as brightness.
+    """
+    if n > len(colors):
+        return {"state": "OFF"}
+    c = colors[n - 1]
+    full = _scaled(c, 255)
+    return {"state": "ON", "color_mode": "rgbw", "brightness": _level(c),
+            "color": {"r": full.r, "g": full.g, "b": full.b, "w": full.w}}
+
+
+def apply_slot(colors: list[Color], n: int, p: dict) -> list[Color]:
+    """The colour list after an HA command for colour `n`.
+
+    Off removes the colour; on sets it, padding any gap before it with the same
+    colour so it lands at position `n`.
+    """
+    if not 1 <= n <= MAX_COLORS:
+        raise ValueError(f"no colour {n}")
+    cols = list(colors)
+    i = n - 1
+    if str(p.get("state", "ON")).upper() == "OFF":
+        if i >= len(cols):
+            return cols
+        if len(cols) == 1:
+            raise ValueError("the sequence needs at least one colour")
+        del cols[i]
+        return cols
+    base = cols[i] if i < len(cols) else (cols[-1] if cols else Color(w=255))
+    hue = base
+    if isinstance(p.get("color"), dict):
+        col = p["color"]
+        hue = Color(int(col.get("r", 0)), int(col.get("g", 0)),
+                    int(col.get("b", 0)), int(col.get("w", 0)))
+    level = int(p["brightness"]) if "brightness" in p else (_level(base) or 255)
+    new = _scaled(hue, max(1, min(255, level)))
+    cols[i:i + 1] = [new]
+    while len(cols) < n:
+        cols.insert(len(cols) - 1, new)
+    return cols
 
 
 class DeviceWorker(threading.Thread):
@@ -297,6 +358,14 @@ class Bridge:
         elif leaf == "colors":
             cols = parse_colors(payload)
             worker.submit(lambda: c.apply(colors=cols))
+        elif leaf.startswith("color/"):
+            n = int(leaf.removeprefix("color/"))
+            p = json.loads(payload or "{}")
+            apply_slot([], n, p)    # reject a bad slot now, not on the worker
+
+            def set_slot():     # read the colours when it runs, not when queued
+                c.apply(colors=apply_slot(c.state.light.colors, n, p))
+            worker.submit(set_slot)
         elif leaf == "timer":
             minutes = float(payload)
             worker.submit(lambda: c.apply(countdown=round(minutes * 60)))
@@ -382,6 +451,9 @@ class Bridge:
             "reverse": "ON" if state.reverse else "OFF",
             "dp106": state.raw,
         }), retain=True)
+        for n in range(1, MAX_COLORS + 1):
+            self.client.publish(self._t(dcfg.dev_id, f"color/{n}"),
+                                json.dumps(slot_state(ls.colors, n)), retain=True)
 
     # -- discovery ----------------------------------------------------------
 
@@ -465,6 +537,13 @@ class Bridge:
                 "command_topic": cmd("reverse"),
             }),
         }
+        for n in range(1, MAX_COLORS + 1):
+            entities[f"color_{n}"] = ("light", {
+                "name": f"Color {n}", "icon": "mdi:palette", "schema": "json",
+                "state_topic": self._t(d.dev_id, f"color/{n}"),
+                "command_topic": cmd(f"color/{n}"),
+                "brightness": True, "supported_color_modes": ["rgbw"],
+            })
         for n in range(1, codec.NUM_BULBS + 1):
             entities[f"bulb_{n}"] = ("switch", {
                 "name": f"Bulb {n}", "icon": "mdi:lightbulb-outline",
