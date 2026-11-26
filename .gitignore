@@ -31,3 +31,4 @@ dist/
 
 # learned scenes and saved looks (per-user data)
 scenes.json
+not_on_account.json

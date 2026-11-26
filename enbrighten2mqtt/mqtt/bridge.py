@@ -14,6 +14,10 @@ HA entities per device, via MQTT discovery:
   - button: Save preset
   - binary_sensor: Connectivity
 JSON command topic `.../set/advanced` remains for automations.
+
+A background thread rescans the LAN every `discovery_interval` seconds, so a
+light that moved to a new IP is reconnected promptly and a light newly added to
+the account is picked up (with one login to fetch its key) without a restart.
 """
 
 from __future__ import annotations
@@ -33,7 +37,7 @@ from ..codec import eternity as codec
 from ..codec.eternity import Color
 from ..controller import Controller
 from ..local.device import DeviceInfo
-from ..local.discovery import find_device_ip
+from ..local.discovery import discover, find_device_ip
 from ..scenes import SceneStore, custom_modes
 
 log = logging.getLogger("enbrighten2mqtt.bridge")
@@ -45,6 +49,11 @@ COLORS_PATTERN = rf"^{_HEX_COLOR}(?:, *{_HEX_COLOR}){{0,5}}$"
 
 MIRED_MIN = round(1_000_000 / codec.KELVIN_MAX)
 MIRED_MAX = round(1_000_000 / codec.KELVIN_MIN)
+
+# How often unknown Tuya devices on the LAN may prompt an account login, and
+# how long one found not to be on the account is left alone.
+CLOUD_RECHECK = 3600
+NOT_OURS_TTL = 24 * 3600
 
 
 def format_colors(colors: list[Color]) -> str:
@@ -78,6 +87,7 @@ class DeviceWorker(threading.Thread):
         self.publish_online = publish_online
         self.cmds: queue.Queue = queue.Queue()
         self._stop = threading.Event()
+        self._wake = threading.Event()
         info = DeviceInfo(dcfg.dev_id, dcfg.ip, dcfg.local_key, dcfg.version)
         self.ctrl = Controller(info, on_state=self._state_changed, scenes=scenes)
         # An IP pinned in config is kept across failures; a discovered one is
@@ -91,6 +101,21 @@ class DeviceWorker(threading.Thread):
 
     def stop(self):
         self._stop.set()
+        self._wake.set()
+
+    def wake(self):
+        """Cut short a reconnect wait, e.g. after a rescan found the device."""
+        self._wake.set()
+
+    @property
+    def pinned_ip(self) -> str:
+        return self.dcfg.ip if self._ip_from_config else ""
+
+    def _sleep(self, secs: float) -> bool:
+        """Wait up to `secs` or until woken; True if the worker should stop."""
+        self._wake.wait(secs)
+        self._wake.clear()
+        return self._stop.is_set()
 
     def _state_changed(self, state):
         self.publish_state(self.dcfg, state)
@@ -125,7 +150,7 @@ class DeviceWorker(threading.Thread):
         while not self._stop.is_set():
             try:
                 if not self._ensure_ip():
-                    if self._stop.wait(min(backoff * 5, 60)):
+                    if self._sleep(min(backoff * 5, 60)):
                         break
                     backoff = min(backoff * 2, 60)
                     continue
@@ -155,14 +180,16 @@ class DeviceWorker(threading.Thread):
                     self.ctrl.info.ip = ""  # re-discover on the next attempt
                 log.warning("device %s error: %s; reconnect in %.0fs",
                             self.dcfg.dev_id[:8], e, backoff)
-                if self._stop.wait(backoff):
+                if self._sleep(backoff):
                     break
                 backoff = min(backoff * 2, 60)
 
 
 class Bridge:
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, *, auto_add: bool = True):
         self.cfg = cfg
+        # False when devices are listed in config: serve those and no others.
+        self.auto_add = auto_add
         self.workers: dict[str, DeviceWorker] = {}
         self.scenes = SceneStore(
             scenes_path(cfg.enbrighten.devices_file),
@@ -174,6 +201,11 @@ class Bridge:
         self.client.on_message = self._on_message
         base = cfg.mqtt.base_topic
         self.client.will_set(f"{base}/bridge/availability", "offline", retain=True)
+        self._stopping = threading.Event()
+        self._last_cloud_check = 0.0
+        self._not_ours_path = Path(cfg.enbrighten.devices_file).with_name(
+            "not_on_account.json")
+        self._not_ours: dict[str, float] = self._load_not_ours()
 
     # -- topics -------------------------------------------------------------
 
@@ -300,12 +332,12 @@ class Bridge:
             return
         for d in self.cfg.devices:
             self._publish_discovery(d)
-        for w in self.workers.values():
+        for w in list(self.workers.values()):
             if w.online:
                 w.submit(w.ctrl.refresh)
 
     def _republish_all(self):
-        for d in self.cfg.devices:
+        for d in list(self.cfg.devices):
             self._publish_discovery(d)
             w = self.workers.get(d.dev_id)
             if w and w.online:
@@ -472,16 +504,107 @@ class Bridge:
 
     # -- run ----------------------------------------------------------------
 
+    def _start_worker(self, d: DeviceConfig) -> DeviceWorker:
+        w = DeviceWorker(d, self._publish_state, self._publish_online, self.scenes)
+        self.workers[d.dev_id] = w
+        w.start()
+        return w
+
+    def add_device(self, d: DeviceConfig):
+        """Serve a device found after startup, announcing it to HA."""
+        self.cfg.devices.append(d)
+        self._start_worker(d)
+        log.info("added new device %s (%s)", d.dev_id[:8], d.name.strip())
+        if self.client.is_connected():
+            self._publish_discovery(d)
+            self.client.subscribe(self._t(d.dev_id, "set/#"))
+
+    # -- LAN rescans --------------------------------------------------------
+
+    def _rescan_loop(self):
+        while not self._stopping.wait(self.cfg.discovery_interval):
+            try:
+                self.rescan()
+            except Exception as e:  # noqa: BLE001
+                log.warning("LAN rescan failed: %s", e)
+
+    def rescan(self):
+        """Scan the LAN: wake workers whose device is back, look for new ones."""
+        seen = discover()
+        log.debug("LAN rescan saw %d Tuya device(s)", len(seen))
+        for dev_id, w in list(self.workers.items()):
+            entry = seen.get(dev_id)
+            if not entry or w.online:
+                continue
+            if w.pinned_ip and entry["ip"] != w.pinned_ip:
+                log.warning("device %s is configured at %s but answers at %s; "
+                            "update or remove its ip in config.yaml",
+                            dev_id[:8], w.pinned_ip, entry["ip"])
+            w.wake()
+        now = time.time()
+        unknown = {i for i in seen if i not in self.workers
+                   and now - self._not_ours.get(i, 0) > NOT_OURS_TTL}
+        if unknown:
+            self._check_account(unknown)
+
+    def _can_login(self) -> bool:
+        eb = self.cfg.enbrighten
+        return bool(eb.email and eb.password and eb.refresh != "never"
+                    and Path(eb.oem_creds).exists())
+
+    def _check_account(self, unknown: set[str]):
+        """Unknown devices are on the LAN: fetch keys in case they're new lights."""
+        if not (self.auto_add and self._can_login()):
+            for i in sorted(unknown):
+                log.info("found Tuya device %s on the LAN; if it's a new light, "
+                         "fetch its key with `enbrighten2mqtt login` and restart",
+                         i[:8])
+            self._mark_not_ours(unknown)
+            return
+        if time.time() - self._last_cloud_check < CLOUD_RECHECK:
+            return
+        self._last_cloud_check = time.time()
+        log.info("found %d unknown Tuya device(s) on the LAN; checking the "
+                 "Enbrighten account for new lights", len(unknown))
+        try:
+            _login_and_cache(self.cfg, self.scenes)
+        except Exception as e:  # noqa: BLE001
+            log.warning("couldn't check the account for new lights: %s", e)
+            return
+        for d in devices_from_json(self.cfg.enbrighten.devices_file):
+            if d.dev_id not in self.workers:
+                self.add_device(d)
+        self._mark_not_ours({i for i in unknown if i not in self.workers})
+
+    def _load_not_ours(self) -> dict[str, float]:
+        try:
+            return {str(k): float(v) for k, v in
+                    json.loads(self._not_ours_path.read_text()).items()}
+        except (OSError, ValueError, AttributeError):
+            return {}
+
+    def _mark_not_ours(self, ids):
+        now = time.time()
+        self._not_ours.update({i: now for i in ids})
+        try:
+            self._not_ours_path.write_text(json.dumps(self._not_ours, indent=2))
+        except OSError as e:
+            log.debug("couldn't save %s: %s", self._not_ours_path, e)
+
+    # -- run ----------------------------------------------------------------
+
     def start(self):
-        for d in self.cfg.devices:
-            w = DeviceWorker(d, self._publish_state, self._publish_online, self.scenes)
-            self.workers[d.dev_id] = w
-            w.start()
+        for d in list(self.cfg.devices):
+            self._start_worker(d)
+        if self.cfg.discovery_interval > 0:
+            threading.Thread(target=self._rescan_loop, daemon=True,
+                             name="lan-rescan").start()
         self.client.connect(self.cfg.mqtt.host, self.cfg.mqtt.port, 60)
         self.client.loop_forever()
 
     def stop(self):
-        for w in self.workers.values():
+        self._stopping.set()
+        for w in list(self.workers.values()):
             w.stop()
         self.client.disconnect()
 
@@ -497,16 +620,17 @@ def scenes_path(devices_file: str) -> str:
     return str(Path(devices_file).with_name("scenes.json"))
 
 
-def import_custom_scenes(api, devices, path: str) -> list[str]:
+def import_custom_scenes(api, devices, path: str,
+                         store: SceneStore | None = None) -> list[str]:
     """Bring the app's DIY scenes (kept in its cloud storage) into the store."""
     modes: dict[int, dict] = {}
     for d in devices:
         for rec in custom_modes(api.device_properties(d.dev_id)):
             modes[rec["mode"]] = rec
-    return SceneStore(path).import_scenes(list(modes.values()))
+    return (store or SceneStore(path)).import_scenes(list(modes.values()))
 
 
-def _login_and_cache(cfg: Config) -> None:
+def _login_and_cache(cfg: Config, store: SceneStore | None = None) -> None:
     from ..cloud.tuya_oem import TuyaOemApi, save_devices
     eb = cfg.enbrighten
     log.info("logging in to Enbrighten to fetch device keys...")
@@ -517,7 +641,8 @@ def _login_and_cache(cfg: Config) -> None:
     save_devices(devices, eb.devices_file)
     log.info("fetched %d device(s) -> %s", len(devices), eb.devices_file)
     try:
-        names = import_custom_scenes(api, devices, scenes_path(eb.devices_file))
+        names = import_custom_scenes(api, devices, scenes_path(eb.devices_file),
+                                     store)
         log.info("imported %d DIY/edited scene(s) from the app", len(names))
     except Exception as e:  # noqa: BLE001
         log.warning("couldn't import DIY scenes from the app: %s", e)
@@ -556,11 +681,12 @@ def bootstrap_devices(cfg: Config) -> list[DeviceConfig]:
 def run(config_path: str = "config.yaml") -> None:
     cfg = Config.load(config_path)
     logging.getLogger().setLevel(cfg.log_level)
-    if not cfg.devices:
+    explicit = bool(cfg.devices)
+    if not explicit:
         cfg.devices = bootstrap_devices(cfg)
     if not cfg.devices:
         raise SystemExit(
             "no devices to serve. Set enbrighten.email/password (+ an OEM creds "
             "file) for automatic login, or provide a devices.json / a `devices:` "
             "list in the config.")
-    Bridge(cfg).start()
+    Bridge(cfg, auto_add=not explicit).start()

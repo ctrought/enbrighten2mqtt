@@ -11,9 +11,10 @@ expecting tinytuya's own {id,key} schema and crash on ours. We call the
 lower-level scanner.devices() directly and pass a dummy tuyadevices list so it
 never touches that file.
 
-A short module-level cache (guarded by a lock so only one scan runs at a time)
-lets the bridge's per-device worker threads share one scan instead of each
-launching their own.
+Results are kept per device with the time each was last seen, guarded by a
+lock so only one scan runs at a time and the bridge's per-device worker threads
+can share scans. Only recent sightings are returned: a device that has moved to
+a new IP, or gone offline, must never be handed its old address again.
 """
 
 from __future__ import annotations
@@ -32,8 +33,7 @@ log = logging.getLogger("enbrighten2mqtt.local")
 _DUMMY_DEVICES = [{"id": "0" * 22, "key": "0" * 16, "name": "_"}]
 
 _lock = threading.Lock()
-_cache: dict[str, dict] = {}
-_cache_ts = 0.0
+_seen: dict[str, dict] = {}     # dev_id -> {"ip", "version", "ts"}
 
 
 def _as_version(v) -> float | None:
@@ -59,23 +59,39 @@ def _scan(want_ids, scantime: float) -> dict[str, dict]:
     return out
 
 
+def _recent(max_age: float) -> dict[str, dict]:
+    now = time.time()
+    return {i: {"ip": e["ip"], "version": e["version"]}
+            for i, e in _seen.items() if now - e["ts"] < max_age}
+
+
 def discover(want_ids=None, *, scantime: float = 10.0,
              max_age: float = 25.0) -> dict[str, dict]:
-    """Return {dev_id: {"ip", "version"}} for devices currently on the LAN.
+    """Return {dev_id: {"ip", "version"}} for devices seen in the last `max_age`s.
 
-    Results are cached for `max_age` seconds; concurrent callers share one scan.
-    A device that is simply offline stays absent until the cache goes stale, so
-    its worker's retries don't each trigger a fresh scan.
+    With `want_ids`, a recent sighting of every one of them is reused rather
+    than scanning again, so concurrent workers share one scan. Without, the LAN
+    is always scanned, to pick up IP changes and devices not seen before.
     """
-    global _cache_ts
     with _lock:
-        if (time.time() - _cache_ts) < max_age and _cache:
-            return dict(_cache)
-        seen = _scan(want_ids, scantime)
-        if seen:
-            _cache.update(seen)
-            _cache_ts = time.time()
-        return dict(_cache)
+        if want_ids:
+            recent = _recent(max_age)
+            if all(i in recent for i in want_ids):
+                return recent
+        now = time.time()
+        for dev_id, entry in _scan(want_ids, scantime).items():
+            old = _seen.get(dev_id)
+            if old and old["ip"] != entry["ip"]:
+                log.info("device %s moved from %s to %s",
+                         dev_id[:8], old["ip"], entry["ip"])
+            _seen[dev_id] = {**entry, "ts": now}
+        return _recent(max_age)
+
+
+def forget() -> None:
+    """Drop every sighting (for tests)."""
+    with _lock:
+        _seen.clear()
 
 
 def find_device_ip(dev_id: str) -> tuple[str | None, float | None]:

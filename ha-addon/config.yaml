@@ -25,6 +25,7 @@ options:
   enbrighten_email: ""
   enbrighten_password: ""
   device_refresh: if_missing
+  discovery_interval: 300  # seconds between LAN rescans; 0 turns them off
   log_level: info
   mqtt_host: ""            # leave blank to use the Home Assistant MQTT service
   mqtt_port: 1883
@@ -34,6 +35,7 @@ schema:
   enbrighten_email: str
   enbrighten_password: password
   device_refresh: list(if_missing|always|never)
+  discovery_interval: int(0,)?
   log_level: list(debug|info|warning|error)
   mqtt_host: str?
   mqtt_port: port?

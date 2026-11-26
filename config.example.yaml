@@ -22,6 +22,10 @@ enbrighten:
 
 log_level: INFO                 # env: LOG_LEVEL
 
+# Seconds between LAN rescans, which catch lights that change IP and new lights
+# on the account. 0 turns them off.  (env: DISCOVERY_INTERVAL)
+discovery_interval: 300
+
 # Instead of (or in addition to) the account login above, you can pin devices
 # explicitly and skip the cloud entirely:
 # devices:

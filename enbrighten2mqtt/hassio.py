@@ -64,6 +64,7 @@ def apply_addon_options() -> bool:
     _setenv("ENBRIGHTEN_EMAIL", opts.get("enbrighten_email"))
     _setenv("ENBRIGHTEN_PASSWORD", opts.get("enbrighten_password"))
     _setenv("DEVICES_REFRESH", opts.get("device_refresh"))
+    _setenv("DISCOVERY_INTERVAL", opts.get("discovery_interval"))
     lvl = opts.get("log_level")
     _setenv("LOG_LEVEL", lvl.upper() if isinstance(lvl, str) else None)
 

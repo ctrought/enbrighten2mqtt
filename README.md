@@ -72,6 +72,14 @@ Control commands never go through the cloud. Once the keys are cached, the bridg
 keeps working if the internet or Tuya is down. It only needs to log in again when
 you add or re-pair a light, or to pick up new DIY scenes.
 
+The bridge finds each light's IP on the LAN rather than storing it, and rescans
+every 5 minutes. A light that gets a new IP from DHCP reconnects at the new
+address. When a rescan finds a Tuya device it doesn't know, the bridge logs in
+once to check whether it's a new light on your account, and adds it without a
+restart. Devices that turn out not to be on your account, such as other brands'
+Tuya plugs, aren't checked again for a day. They're listed in
+`not_on_account.json`.
+
 The phone app keeps working, because the bridge uses the keys the cloud already
 issued.
 
@@ -137,6 +145,7 @@ take priority. The Home Assistant app has the same settings as options.
 | `DEVICES_REFRESH` | `enbrighten.refresh` | `device_refresh` | When to log in: `if_missing` (default), `always` or `never` |
 | `OEM_CREDS` | `enbrighten.oem_creds` | – | Path to the [app constants](#app-constants) |
 | `DEVICES_FILE` | `enbrighten.devices_file` | – | Path to the key cache |
+| `DISCOVERY_INTERVAL` | `discovery_interval` | `discovery_interval` | Seconds between LAN rescans (default `300`). `0` turns them off |
 | `LOG_LEVEL` | `log_level` | `log_level` | `INFO`, `DEBUG` and so on |
 
 To skip the cloud entirely, list your devices and their keys in `config.yaml`. See
@@ -276,6 +285,7 @@ another, see [Adding support for a new device](docs/adding-devices.md).
 |---|---|
 | Lights stop responding after re-pairing | Re-pairing changes the key. Run `enbrighten2mqtt login`, or set `DEVICES_REFRESH=always`, then restart |
 | No lights discovered | The bridge must be on the same broadcast domain and needs host networking. Across VLANs or subnets, set each light's IP in `config.yaml` |
+| A light with an IP set in `config.yaml` changed address | Pinned IPs are never replaced. The log warns when a rescan finds the light elsewhere. Update or remove its `ip` |
 | New or edited DIY scene is missing or out of date | Run `enbrighten2mqtt scenes import`, or set `DEVICES_REFRESH=always`, then restart |
 | Light connects intermittently | These lights serve one LAN session at a time. Make sure nothing else, such as a second bridge, is connected directly |
 | More detail needed | Set `LOG_LEVEL=DEBUG` |

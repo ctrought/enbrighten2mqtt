@@ -57,3 +57,11 @@ def test_bootstrap_refresh_never_skips_login(tmp_path):
     cfg.enbrighten.devices_file = str(tmp_path / "missing.json")
     # refresh=never + missing cache -> no login attempted, empty list.
     assert bootstrap_devices(cfg) == []
+
+
+def test_discovery_interval(monkeypatch, tmp_path):
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text("discovery_interval: 120\n")
+    assert Config.load(str(cfg_file)).discovery_interval == 120
+    monkeypatch.setenv("DISCOVERY_INTERVAL", "0")
+    assert Config.load(str(cfg_file)).discovery_interval == 0

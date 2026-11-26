@@ -54,6 +54,8 @@ class Config:
     enbrighten: EnbrightenConfig = field(default_factory=EnbrightenConfig)
     devices: list[DeviceConfig] = field(default_factory=list)
     log_level: str = "INFO"
+    # Seconds between LAN rescans for moved or new devices; 0 turns them off.
+    discovery_interval: int = 300
 
     @classmethod
     def load(cls, path: str = "config.yaml") -> "Config":
@@ -66,6 +68,8 @@ class Config:
             mqtt=mqtt,
             enbrighten=enb,
             log_level=os.environ.get("LOG_LEVEL", raw.get("log_level", "INFO")),
+            discovery_interval=int(os.environ.get(
+                "DISCOVERY_INTERVAL", raw.get("discovery_interval", 300))),
         )
         # Only devices listed explicitly in config are loaded here; a cached
         # devices.json (and, failing that, an automatic login) is resolved at

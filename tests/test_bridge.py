@@ -1,6 +1,7 @@
 """Bridge tests: discovery payloads and command routing, with no broker or LAN."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -218,3 +219,47 @@ def test_colors_text_round_trips():
 def test_bad_colors_rejected(bad):
     with pytest.raises(ValueError):
         B.parse_colors(bad)
+
+
+# -- LAN rescans --------------------------------------------------------------
+
+def test_rescan_wakes_offline_worker(bridge, monkeypatch):
+    woken = []
+    w = bridge.workers["devabc"]
+    w.online, w.pinned_ip = False, ""
+    w.wake = lambda: woken.append(True)
+    monkeypatch.setattr(B, "discover", lambda: {"devabc": {"ip": "10.0.0.9"}})
+    bridge.rescan()
+    assert woken == [True]
+
+
+def test_rescan_without_login_notes_unknown_device_once(bridge, monkeypatch, caplog):
+    monkeypatch.setattr(B, "discover", lambda: {"other": {"ip": "10.0.0.5"}})
+    with caplog.at_level("INFO"):
+        bridge.rescan()
+        bridge.rescan()
+    assert sum("enbrighten2mqtt login" in r.message for r in caplog.records) == 1
+    assert "other" in json.loads(bridge._not_ours_path.read_text())
+
+
+def test_new_light_on_account_is_added(bridge, monkeypatch, tmp_path):
+    eb = bridge.cfg.enbrighten
+    eb.email, eb.password = "a@b.com", "pw"
+    eb.oem_creds = str(tmp_path / "oem.json")
+    Path(eb.oem_creds).write_text("{}")
+    monkeypatch.setattr(B, "discover", lambda: {
+        "devnew": {"ip": "10.0.0.7"}, "plug": {"ip": "10.0.0.8"}})
+
+    def fake_login(cfg, store=None):
+        Path(eb.devices_file).write_text(json.dumps([
+            {"dev_id": "devabc", "local_key": "k"},
+            {"dev_id": "devnew", "local_key": "k2", "name": "Eave"}]))
+    monkeypatch.setattr(B, "_login_and_cache", fake_login)
+    added = []
+    monkeypatch.setattr(bridge, "add_device", lambda d: added.append(d.dev_id)
+                        or bridge.workers.__setitem__(d.dev_id, FakeWorker()))
+    bridge.rescan()
+    assert added == ["devnew"]
+    assert set(bridge._not_ours) == {"plug"}
+    bridge.rescan()     # the login isn't repeated within the hour
+    assert added == ["devnew"]
